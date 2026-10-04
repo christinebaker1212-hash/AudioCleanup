@@ -102,6 +102,7 @@ struct FramePowers
 {
     std::vector<std::vector<float>> psd; // per frame, channel-averaged |X|^2
     std::vector<double> energy;          // per frame total
+    std::vector<double> logMean;         // per frame mean log-power (each bin weighted equally)
     std::vector<size_t> start;
 };
 
@@ -127,10 +128,11 @@ FramePowers framePowers(const AudioBuffer& b, int N, size_t from, size_t to)
             fft.forward(frame.data(), spec.data());
             for (int k = 0; k < bins; ++k) p[size_t(k)] += std::norm(spec[size_t(k)]) / float(b.numChannels());
         }
-        double e = 0;
-        for (float v : p) e += v;
+        double e = 0, lm = 0;
+        for (float v : p) { e += v; lm += std::log(double(v) + 1e-30); }
         fp.psd.push_back(std::move(p));
         fp.energy.push_back(e);
+        fp.logMean.push_back(lm / bins);
         fp.start.push_back(s);
     }
     return fp;
@@ -173,7 +175,10 @@ NoiseProfile NoiseProfile::estimate(const AudioBuffer& b, int N, double quietPer
     for (size_t i = 0; i < fp.energy.size(); ++i)
         if (fp.energy[i] > 1e-12) idx.push_back(i);
     if (idx.size() < 3) return np;
-    std::sort(idx.begin(), idx.end(), [&](size_t a, size_t c) { return fp.energy[a] < fp.energy[c]; });
+    // Rank frames by mean log-power so that every bin has equal say; ranking
+    // by total energy would let the strongest (usually low) bins pick the
+    // frames and bias exactly those bins low.
+    std::sort(idx.begin(), idx.end(), [&](size_t a, size_t c) { return fp.logMean[a] < fp.logMean[c]; });
     const size_t take = std::max<size_t>(std::min<size_t>(idx.size(), 5), size_t(double(idx.size()) * quietPercent / 100.0));
     // Per-bin median over the quiet frames / ln2 = mean of an exponential
     // distribution: robust to occasional events inside "quiet" frames.
@@ -301,7 +306,7 @@ void SpectralDenoiser::processFrame(std::vector<std::complex<float>*>& X)
                 double mn = cm;
                 for (auto& sm : subMins_) mn = std::min(mn, sm[off + size_t(k)]);
                 const double tracked = B * mn;
-                lambda = s_.profile.valid ? clampv(tracked, 0.5 * lambda, 8.0 * lambda) : tracked;
+                lambda = s_.profile.valid ? clampv(tracked, 0.1 * lambda, 30.0 * lambda) : tracked;
             }
             lambda = std::max(1e-20, lambda * s_.oversubtraction);
             const double gamma = std::min(1e4, y / lambda);
@@ -313,6 +318,20 @@ void SpectralDenoiser::processFrame(std::vector<std::complex<float>*>& X)
             prevPost_[off + size_t(k)] = gamma;
             gain_[size_t(k)] = std::max(g, gmin);
         }
+        // Frame speech/programme presence: mean a-posteriori SNR in 300 Hz-4 kHz.
+        // The release hold (which protects decays) is only used while programme
+        // is present; on noise-only frames it would latch onto random peaks
+        // and leave "chirpy" residual noise.
+        double gsum = 0;
+        int gcnt = 0;
+        const int kp0 = std::max(1, int(300.0 * fftSize() / sampleRate()));
+        const int kp1 = std::min(bins_ - 1, int(4000.0 * fftSize() / sampleRate()));
+        for (int k = kp0; k <= kp1; ++k)
+        {
+            gsum += pw_[size_t(k)] / std::max(1e-20, noise_[size_t(k)] * s_.oversubtraction);
+            ++gcnt;
+        }
+        const bool programme = gcnt > 0 && gsum / gcnt > 4.0;
         // Constant-relative-bandwidth smoothing across frequency.
         tmp_[0] = 0;
         for (int k = 0; k < bins_; ++k) tmp_[size_t(k) + 1] = tmp_[size_t(k)] + gain_[size_t(k)];
@@ -322,9 +341,9 @@ void SpectralDenoiser::processFrame(std::vector<std::complex<float>*>& X)
             const int a = std::max(0, k - h), e = std::min(bins_ - 1, k + h);
             double g = (tmp_[size_t(e) + 1] - tmp_[size_t(a)]) / double(e - a + 1);
             if (k < kLow) g = 1.0;
-            // Asymmetric time smoothing: instant rise (onsets), slow fall.
+            // Release smoothing only while programme is present (decay tails).
             double& sg = smoothG_[off + size_t(k)];
-            sg = g >= sg ? g : aRel_ * sg + (1.0 - aRel_) * g;
+            sg = (g >= sg || !programme) ? g : aRel_ * sg + (1.0 - aRel_) * g;
             const double ga = std::max(sg, gmin);
             attnNum_ += pw_[size_t(k)] * ga * ga;
             attnDen_ += pw_[size_t(k)];

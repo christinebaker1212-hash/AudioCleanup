@@ -1,0 +1,213 @@
+// End-to-end validation of the adaptive pipeline: delivery targets, channel
+// and timing preservation, silence/short clips, preview/export consistency,
+// overrides, cancellation, batch consistency, user presets.
+
+#include "TestFramework.h"
+#include "TestSignals.h"
+
+#include "AudioIO.h"
+
+#include <ac/Pipeline.h>
+
+#include <juce_core/juce_core.h>
+
+using namespace ac;
+
+namespace {
+constexpr double SR = 48000.0;
+
+ProcessResult run(const AudioBuffer& in, const std::string& preset, UserControls uc = {})
+{
+    ProcessRequest rq;
+    rq.input = &in;
+    rq.preset = findPreset(preset);
+    rq.category = rq.preset->category;
+    rq.controls = uc;
+    return process(rq, {});
+}
+
+AudioBuffer materialFor(Category c, uint64_t seed)
+{
+    if (c == Category::Voice)
+    {
+        AudioBuffer v = ts::pseudoSpeech(SR, 12.0, seed, -26);
+        ts::add(v, ts::noise(SR, 1, 12.0, -58, seed + 1, true));
+        return v;
+    }
+    if (c == Category::Music) return ts::pseudoMusic(SR, 12.0, seed, -20);
+    AudioBuffer s = ts::impacts(SR, 2, 3.0, 0.7, seed);
+    ts::add(s, ts::noise(SR, 2, 3.0, -60, seed + 2));
+    return s;
+}
+} // namespace
+
+TEST("pipeline: every preset meets its true-peak ceiling and loudness target (or reports why not)")
+{
+    for (auto& p : allPresets())
+    {
+        AudioBuffer in = materialFor(p.category, 100 + uint64_t(&p - &allPresets()[0]));
+        ProcessResult r = run(in, p.id);
+        const double tp = r.outputStats.truePeakDb;
+        const bool loudMode = p.loudnessMode != LoudnessMode::Peak && p.loudnessMode != LoudnessMode::Unchanged;
+        REPORT("%-18s %-14s -> %s %.2f (target %.1f%s), TP %.2f (ceiling %.1f), LRA %.1f", p.id.c_str(), categoryName(p.category),
+               loudnessModeName(r.plan.loudnessMode), r.outputLoudnessValue, p.targetLufs, r.targetReached ? "" : ", NOT reached: bound",
+               tp, p.ceilingDbTP, r.outputStats.lra);
+        CHECK_MSG(tp <= p.ceilingDbTP + 0.1, p.id);
+        if (loudMode && r.targetReached) CHECK_NEAR(r.outputLoudnessValue, p.targetLufs, 0.3);
+        if (!r.targetReached) CHECK_MSG(r.outputLoudnessValue < p.targetLufs, p.id + " flagged but loud enough");
+        if (p.loudnessMode == LoudnessMode::Peak) CHECK_NEAR(tp, p.ceilingDbTP, 0.15);
+        for (int c = 0; c < r.output.numChannels(); ++c)
+            for (float v : r.output.vec(c)) CHECK_MSG(std::isfinite(v), "non-finite sample");
+    }
+}
+
+TEST("pipeline: all sections off is an exact pass-through")
+{
+    AudioBuffer in = ts::pseudoMusic(SR, 4.0, 3);
+    UserControls uc;
+    for (bool& b : uc.sectionOn) b = false;
+    ProcessResult r = run(in, "music.loud", uc);
+    CHECK(r.output.numFrames() >= in.numFrames());
+    CHECK(ts::maxAbsDiff(in, r.output, 0, in.numFrames()) == 0.0);
+}
+
+TEST("pipeline: channel configuration, length and timing preserved")
+{
+    for (int ch : { 1, 2, 5 })
+    {
+        AudioBuffer in = ts::impacts(SR, ch, 3.0, 0.5, 9);
+        ProcessResult r = run(in, "sfx.transparent");
+        CHECK(r.output.numChannels() == ch);
+        CHECK(r.output.numFrames() >= in.numFrames());
+        CHECK(r.output.numFrames() <= in.numFrames() + size_t(SR)); // bounded tail
+        const int lag = ts::bestLag(in.vec(0), r.output.vec(0), 2000);
+        REPORT("%d channels: lag %d samples, length %zu -> %zu", ch, lag, in.numFrames(), r.output.numFrames());
+        CHECK(lag == 0);
+    }
+    // Full voice chain (denoise STFT, lookaheads, resampling to 44.1 kHz) stays aligned.
+    AudioBuffer v = materialFor(Category::Voice, 5);
+    UserControls uc;
+    uc.outputSampleRate = 44100;
+    ProcessResult r = run(v, "voice.studio", uc);
+    const int lag = ts::bestLag(r.reference.vec(0), r.output.vec(0), 4000);
+    REPORT("voice.studio 48k -> 44.1k: lag vs reference %d samples", lag);
+    CHECK(std::abs(lag) <= 1);
+    CHECK(r.output.sampleRate == 44100);
+}
+
+TEST("pipeline: silence and very short clips")
+{
+    AudioBuffer silence(2, size_t(SR), SR);
+    ProcessResult r = run(silence, "music.loud");
+    CHECK(r.output.peak() == 0.0f);
+    AudioBuffer blip = ts::sine(SR, 1, 0.08, 1500, 0.3);
+    for (size_t i = 0; i < blip.numFrames(); ++i) blip.channel(0)[i] *= float(std::exp(-double(i) / (0.01 * SR)));
+    for (auto* id : { "sfx.punchy", "sfx.game", "voice.natural", "music.transparent" })
+    {
+        ProcessResult rb = run(blip, id);
+        REPORT("80 ms blip, %s: mode %s, TP %.2f dBTP", id, loudnessModeName(rb.plan.loudnessMode), rb.outputStats.truePeakDb);
+        CHECK(rb.output.numFrames() >= blip.numFrames());
+        CHECK(rb.outputStats.truePeakDb <= findPreset(id)->ceilingDbTP + 0.1);
+        CHECK(rb.outputStats.truePeakDb > -40.0);
+    }
+}
+
+TEST("pipeline: preview/export consistency (float bit-exact, PCM = engine dither)")
+{
+    AudioBuffer in = materialFor(Category::Music, 7);
+    ProcessResult r = run(in, "music.transparent");
+    const auto dir = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("af_test_io");
+    dir.createDirectory();
+    std::string err;
+    af::ExportOptions f32;
+    f32.bitDepth = 32;
+    const std::string p32 = dir.getChildFile("out32.wav").getFullPathName().toStdString();
+    CHECK(af::saveAudio(p32, r.output, f32, err));
+    AudioBuffer back;
+    CHECK(af::loadAudio(p32, back, err));
+    CHECK(back.numFrames() == r.output.numFrames());
+    CHECK(ts::maxAbsDiff(back, r.output) == 0.0);
+    for (auto fmt : { af::FileFormat::Wav, af::FileFormat::Flac })
+    {
+        af::ExportOptions p24;
+        p24.bitDepth = 24;
+        p24.format = fmt;
+        const std::string path = dir.getChildFile(fmt == af::FileFormat::Wav ? "out24.wav" : "out24.flac").getFullPathName().toStdString();
+        CHECK(af::saveAudio(path, r.output, p24, err));
+        AudioBuffer b24;
+        CHECK(af::loadAudio(path, b24, err));
+        const AudioBuffer expect = quantiseToFloat(r.output, 24, DitherType::Tpdf);
+        REPORT("%s 24-bit round trip max diff vs engine quantiser: %.3g", fmt == af::FileFormat::Wav ? "WAV" : "FLAC", ts::maxAbsDiff(b24, expect));
+        CHECK(ts::maxAbsDiff(b24, expect) < 1e-9);
+    }
+    dir.deleteRecursively();
+}
+
+TEST("pipeline: user overrides, macros and cancellation")
+{
+    AudioBuffer in = materialFor(Category::Voice, 21);
+    UserControls uc;
+    uc.overrides[StageId::Compressor] = Override::Off;
+    uc.overrides[StageId::Dereverb] = Override::On;
+    ProcessResult r = run(in, "voice.studio", uc);
+    CHECK(!r.plan.stage(StageId::Compressor).enabled);
+    CHECK(r.plan.stage(StageId::Compressor).reason.find("user") != std::string::npos);
+    CHECK(r.plan.stage(StageId::Dereverb).enabled);
+    // Dynamics macro at 0 disables the compressor/leveler automatically.
+    UserControls z;
+    z.dynamics = 0.0;
+    ProcessResult r0 = run(in, "voice.studio", z);
+    CHECK(!r0.plan.stage(StageId::Compressor).enabled);
+    // Cancellation.
+    std::atomic<bool> cancel{ true };
+    Job job;
+    job.cancel = &cancel;
+    ProcessRequest rq;
+    rq.input = &in;
+    rq.preset = findPreset("voice.studio");
+    bool threw = false;
+    try { process(rq, job); } catch (const CancelledException&) { threw = true; }
+    CHECK(threw);
+}
+
+TEST("pipeline: removed-noise audition signal is the exact cleanup difference")
+{
+    AudioBuffer in = materialFor(Category::Voice, 33);
+    UserControls uc;
+    uc.sectionOn[1] = uc.sectionOn[2] = uc.sectionOn[3] = false; // cleanup only
+    ProcessResult r = run(in, "voice.rescue", uc);
+    AudioBuffer sum = r.output;
+    ts::add(sum, r.removed);
+    CHECK(ts::maxAbsDiff(sum, in, 0, in.numFrames()) < 1e-6);
+    REPORT("removed signal level %.1f dBFS (input noise -58 dBFS)", ts::rmsDb(r.removed));
+}
+
+TEST("batch consistency: pulls toward the group target, keeps a fraction of differences")
+{
+    const auto t = batchConsistencyTargets({ -10.0, -14.0, -20.0, -INFINITY }, -14.0, 0.5);
+    CHECK_NEAR(t[0], -12.0, 1e-9);
+    CHECK_NEAR(t[1], -14.0, 1e-9);
+    CHECK_NEAR(t[2], -17.0, 1e-9);
+    CHECK_NEAR(t[3], -14.0, 1e-9);
+}
+
+TEST("user presets: JSON round trip")
+{
+    PresetDef p = *findPreset("music.warm");
+    p.id = "user.mywarm";
+    p.name = "My \"Warm\" master";
+    p.targetLufs = -10.5;
+    p.targetOffsets = { { 100, 1.5 }, { 9000, -2 } };
+    p.compStyle.attackMs = 17;
+    const std::string js = presetToJson(p);
+    PresetDef q;
+    std::string err;
+    CHECK(presetFromJson(js, q, &err));
+    CHECK(q.id == p.id);
+    CHECK(q.name == p.name);
+    CHECK(q.category == Category::Music);
+    CHECK_NEAR(q.targetLufs, -10.5, 1e-9);
+    CHECK_NEAR(q.compStyle.attackMs, 17, 1e-9);
+    CHECK(q.targetOffsets.size() == 2);
+    CHECK_NEAR(q.targetOffsets[1].second, -2, 1e-9);
+}

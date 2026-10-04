@@ -81,19 +81,24 @@ void Downsampler::setup(int factor, int tapsPerPhase, double beta, double cutoff
 
 void Downsampler::reset()
 {
-    hist_.assign(size_t(N_) * 2, 0.0);
+    // Circular history of N + L samples (doubled for contiguous reads).
+    hist_.assign(size_t(N_ + L_) * 2, 0.0);
     pos_ = 0;
 }
 
 double Downsampler::process(const double* in)
 {
+    const int M = N_ + L_;
     for (int i = 0; i < L_; ++i)
     {
-        pos_ = (pos_ == 0 ? N_ : pos_) - 1;
+        pos_ = (pos_ == 0 ? M : pos_) - 1;
         hist_[size_t(pos_)] = in[i];
-        hist_[size_t(pos_ + N_)] = in[i];
+        hist_[size_t(pos_ + M)] = in[i];
     }
-    const double* xs = &hist_[size_t(pos_)]; // xs[j] = y[m - j], m = newest
+    // Evaluate at the first high-rate sample of this group (the one aligned
+    // with the base-rate instant), so the up/down round trip delay is exactly
+    // T base samples rather than T - (L-1)/L.
+    const double* xs = &hist_[size_t(pos_ + L_ - 1)]; // xs[j] = y[nL - j]
     double acc = 0.0;
     for (int j = 0; j < N_; ++j) acc += h_[size_t(j)] * xs[j];
     return acc;

@@ -180,14 +180,43 @@ std::vector<Event> detect(const std::vector<double>& x, double sr, const ClickSe
                 pk = std::max(pk, stat[size_t(j)]);
                 ++j;
             }
-            // Isolation: a click stands far above every other residual peak
-            // within +/-20 ms. Periodic excitation (glottal pulses, plucked
-            // or bowed notes) has comparable neighbours and is rejected.
-            double nb = 0;
-            for (int t = std::max(0, i - W); t < std::min(len, lastHit + W + 1); ++t)
-                if (t < i - 3 || t > lastHit + 3) nb = std::max(nb, stat[size_t(t)]);
-            const bool isolated = pk > 3.0 * nb;
-            Event e{ s0i + i - 2, s0i + lastHit + 2 };
+            // Periodicity test: glottal pulses and similar periodic excitation
+            // produce residual peaks of comparable size at regular spacing.
+            // Collect comparable local peaks within +/-20 ms; reject when they
+            // are dense or regularly spaced. Isolated clicks (or a few
+            // irregular ones) pass.
+            std::vector<int> nbs;
+            const int lo = std::max(1, i - W), hi = std::min(len - 1, lastHit + W);
+            for (int t = lo; t < hi; ++t)
+            {
+                if (t >= i - 3 && t <= lastHit + 3) continue;
+                const double v = stat[size_t(t)];
+                if (v >= pk / 3.0 && v >= stat[size_t(t - 1)] && v >= stat[size_t(t + 1)]) nbs.push_back(t - i);
+            }
+            // merge peaks closer than 1 ms (one excitation)
+            std::vector<int> peaksAt;
+            for (int d : nbs)
+                if (peaksAt.empty() || d - peaksAt.back() > int(0.001 * sr)) peaksAt.push_back(d);
+            bool periodic = peaksAt.size() >= 4;
+            for (size_t u = 0; u < peaksAt.size() && !periodic; ++u)
+                for (size_t v = u + 1; v < peaksAt.size() && !periodic; ++v)
+                {
+                    const double a1 = peaksAt[u], a2 = peaksAt[v];
+                    const double d1 = std::abs(a1), d2 = std::abs(a2);
+                    if (d1 < 1 || d2 < 1) continue;
+                    // one on each side at similar distance, or two on one side at 1x and 2x
+                    if (a1 * a2 < 0 && std::abs(d1 - d2) < 0.2 * std::max(d1, d2)) periodic = true;
+                    if (a1 * a2 > 0 && std::abs(std::max(d1, d2) - 2.0 * std::min(d1, d2)) < 0.2 * std::max(d1, d2)) periodic = true;
+                }
+            const bool isolated = !periodic;
+            // Refine the edges: the forward residual becomes large exactly at
+            // the first corrupted sample and the backward residual at the
+            // last, while min(ef, eb) under-reads near both edges.
+            int a0 = i, b0 = lastHit;
+            const double low = 0.5 * thr;
+            while (a0 > 0 && i - a0 < maxLen && ef[size_t(a0 - 1)] > low) --a0;
+            while (b0 + 1 < len && b0 - lastHit < maxLen && eb[size_t(b0 + 1)] > low) ++b0;
+            Event e{ s0i + a0 - 1, s0i + b0 + 1 };
             e.a = std::max(0, e.a);
             e.b = std::min(n - 1, e.b);
             i = lastHit + 1;
@@ -195,14 +224,15 @@ std::vector<Event> detect(const std::vector<double>& x, double sr, const ClickSe
             if (e.b - e.a + 1 > maxLen) { ++rejected; continue; }
             if (s.protectTransients)
             {
-                const int w1 = int(0.005 * sr), w2 = int(0.012 * sr);
-                double pre = 0, post = 0;
-                int np = 0, nq = 0;
-                for (int t = std::max(0, e.a - w1); t < e.a; ++t) { pre += x[size_t(t)] * x[size_t(t)]; ++np; }
-                for (int t = e.b + 1; t < std::min(n, e.b + 1 + w2); ++t) { post += x[size_t(t)] * x[size_t(t)]; ++nq; }
-                pre = np ? pre / np : 0;
-                post = nq ? post / nq : 0;
-                if (post > 4.0 * pre + 1e-12) { ++rejected; continue; } // onset: program, not a click
+                // Onset test on the median power of 8 ms windows either side:
+                // robust to the click's own samples, while a genuine onset
+                // raises the power of the whole following window.
+                const int w = int(0.008 * sr);
+                std::vector<double> pre, post;
+                for (int t = std::max(0, e.a - w); t < e.a; ++t) pre.push_back(x[size_t(t)] * x[size_t(t)]);
+                for (int t = e.b + 1; t < std::min(n, e.b + 1 + w); ++t) post.push_back(x[size_t(t)] * x[size_t(t)]);
+                const double mpre = pre.empty() ? 0.0 : median(pre), mpost = post.empty() ? 0.0 : median(post);
+                if (mpost > 6.0 * mpre + 1e-12) { ++rejected; continue; } // onset: programme, not a click
             }
             out.push_back(e);
         }

@@ -51,9 +51,9 @@ HumInfo detectHum(const std::vector<float>& mono, double sr)
         for (int k = 0; k < bins; ++k) acc[size_t(k)] += std::norm(sp[size_t(k)]);
     }
     const double binHz = sr / N;
-    auto prominence = [&](double f, double& peakFreq) {
+    auto prominence = [&](double f, double& peakFreq, double searchHz) {
         const int kc = int(std::lround(f / binHz));
-        const int search = std::max(2, int(std::ceil(0.012 * f / binHz)));
+        const int search = std::max(1, int(std::ceil(searchHz / binHz)));
         int kp = kc;
         for (int k = kc - search; k <= kc + search; ++k)
             if (k > 1 && k < bins - 1 && acc[size_t(k)] > acc[size_t(kp)]) kp = k;
@@ -70,27 +70,38 @@ HumInfo detectHum(const std::vector<float>& mono, double sr)
         return powerToDb(acc[size_t(kp)]) - powerToDb(median(nb));
     };
     double bestScore = 0;
-    for (double f0 : { 50.0, 60.0 })
+    for (double nominal : { 50.0, 60.0 })
     {
-        HumInfo cand;
-        cand.f0 = f0;
-        double score = 0, fsum = 0, wsum = 0;
-        int strong = 0;
-        for (int k = 1; k * f0 < std::min(1500.0, 0.45 * sr); ++k)
+        // Pass 1: refine f0 from the low harmonics (mains tolerance +/-1.2 %).
+        double fsum = 0, wsum = 0;
+        for (int k = 1; k <= 4; ++k)
         {
             double pf = 0;
-            const double p = prominence(k * f0, pf);
+            const double p = prominence(k * nominal, pf, std::max(2.0 * binHz, 0.012 * k * nominal));
+            if (p > 10.0) { fsum += (pf / k) * p; wsum += p; }
+        }
+        if (wsum <= 0) continue;
+        HumInfo cand;
+        cand.f0 = fsum / wsum;
+        // Pass 2: genuine mains harmonics sit at exact multiples of f0; accept
+        // a peak only within +/-(0.5 Hz + k * 0.03 Hz) of k * f0 so programme
+        // tones that happen to lie near a harmonic are never notched.
+        double score = 0;
+        int strong = 0;
+        for (int k = 1; k * cand.f0 < std::min(1500.0, 0.45 * sr); ++k)
+        {
+            double pf = 0;
+            const double tol = 0.5 + 0.03 * k + binHz * 0.25;
+            const double p = prominence(k * cand.f0, pf, tol + binHz);
+            if (std::abs(pf - k * cand.f0) > tol) continue;
             if (p > 6.0)
             {
                 cand.harmonics.push_back({ pf, p });
                 score += p - 6.0;
-                fsum += (pf / k) * p;
-                wsum += p;
             }
             if (p > 10.0 && k <= 8) ++strong;
             if (k <= 2 && p > 15.0) strong += 2;
         }
-        if (wsum > 0) cand.f0 = fsum / wsum;
         cand.detected = strong >= 2;
         if (cand.detected && score > bestScore)
         {
@@ -371,41 +382,53 @@ SpectrumInfo spectrumInfo(const AudioBuffer& b, const NoiseProfile& noise)
 }
 
 // -------------------------------------------------------------- rt60
-double estimateRt60(const std::vector<float>& mono, double sr, double noiseDb)
+double estimateRt60(const std::vector<float>& mono, double sr, double /*noiseDb*/)
 {
     const size_t hop = size_t(sr * 0.01);
     if (hop == 0 || mono.size() < hop * 50) return 0.0;
     const size_t hops = mono.size() / hop;
-    std::vector<double> env(hops);
+    std::vector<double> pw(hops), env(hops);
     for (size_t h = 0; h < hops; ++h)
     {
         double s = 0;
         for (size_t i = h * hop; i < (h + 1) * hop; ++i) s += double(mono[i]) * mono[i];
-        env[h] = powerToDb(s / double(hop), -200.0);
+        pw[h] = s / double(hop);
     }
+    // 30 ms power smoothing: decaying reverberation is noise-like and its
+    // 10 ms energy fluctuates by several dB frame to frame.
+    for (size_t h = 0; h < hops; ++h)
+    {
+        const size_t a = h > 0 ? h - 1 : 0, b = std::min(hops - 1, h + 1);
+        env[h] = powerToDb((pw[a] + pw[h] + pw[b]) / 3.0, -200.0);
+    }
+    // Floor from the quietest 5 % of 10 ms frames (the noise profile would
+    // include the reverb tail itself and hide the decays).
+    std::vector<double> sorted(env.begin(), env.end());
+    const double floorDb = percentile(sorted, 5.0);
     std::vector<double> rts;
     size_t h = 5;
     while (h + 10 < hops)
     {
-        bool isPeak = env[h] > noiseDb + 35.0;
+        bool isPeak = env[h] > floorDb + 25.0;
         for (size_t j = h - 5; j <= h + 5 && isPeak; ++j)
             if (env[j] > env[h]) isPeak = false;
         if (!isPeak) { ++h; continue; }
         const double start = env[h];
         size_t j = h + 1;
         double minSoFar = start;
-        while (j < hops && env[j] < minSoFar + 1.0 && env[j] > start - 30.0)
+        while (j < hops && env[j] < minSoFar + 2.0 && env[j] > std::max(start - 30.0, floorDb + 3.0))
         {
             minSoFar = std::min(minSoFar, env[j]);
             ++j;
         }
-        if (minSoFar <= start - 25.0)
+        if (minSoFar <= start - 12.0)
         {
-            // regression over -5..-25 dB
+            // regression over -3..-(up to 20) dB: early decay of free decays
+            // (continuous speech rarely leaves more than ~15 dB of free decay).
             double sx = 0, sy = 0, sxx = 0, sxy = 0;
             int m = 0;
             for (size_t k = h; k < j; ++k)
-                if (env[k] <= start - 5.0 && env[k] >= start - 25.0)
+                if (env[k] <= start - 3.0 && env[k] >= std::max(start - 20.0, minSoFar))
                 {
                     const double x = double(k - h) * 0.01;
                     sx += x; sy += env[k]; sxx += x * x; sxy += x * env[k]; ++m;

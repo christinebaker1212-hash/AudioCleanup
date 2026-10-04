@@ -42,9 +42,9 @@ std::vector<float> runModel(const std::vector<float>& x, std::vector<float>* vad
 
 int NeuralSpeechDenoiser::modelLatency48k()
 {
-    // RNNoise analyses 20 ms windows with 10 ms hop and overlap-adds the
-    // output: the delay is one frame. Verified by tests (cross-correlation).
-    return kFrame;
+    // RNNoise 0.2: one frame of input buffering plus one frame of
+    // overlap-add synthesis = 20 ms. Verified by tests (cross-correlation).
+    return 2 * kFrame;
 }
 
 void NeuralSpeechDenoiser::processOffline(AudioBuffer& b, const Job& job)

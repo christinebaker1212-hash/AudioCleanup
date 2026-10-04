@@ -198,7 +198,7 @@ void Expander::prepare(double sr, int ch)
     aA_ = timeCoeff(s_.attackMs, sr);
     aR_ = timeCoeff(s_.releaseMs, sr);
     holdSamples_ = int(s_.holdMs * 0.001 * sr);
-    holdCount_ = 0;
+    holdCount_ = holdSamples_; // start open: no gating before the first measurement
     env_ = 0;
     gr_ = 0;
     la_ = int(std::lround(s_.lookaheadMs * 0.001 * sr));
