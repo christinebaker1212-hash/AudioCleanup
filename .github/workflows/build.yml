@@ -1,0 +1,73 @@
+name: build
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    name: Windows x64 (MSVC)
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: deps-win-${{ hashFiles('cmake/Dependencies.cmake') }}
+
+      - name: Configure
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Validation tests
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Get-ChildItem build -Recurse -Filter *.exe |
+            Where-Object { $_.FullName -match '_artefacts\\Release\\' -and $_.Name -notmatch 'juceaide' } |
+            ForEach-Object { Copy-Item $_.FullName dist/ }
+          Copy-Item README.md, LICENSE-THIRD-PARTY.md dist/
+          Copy-Item docs -Destination dist/docs -Recurse
+          Get-ChildItem dist
+          Compress-Archive -Path dist/* -DestinationPath AudioFinisher-win64.zip -Force
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AudioFinisher-win64
+          path: AudioFinisher-win64.zip
+
+      - name: Publish release (tags v*)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: AudioFinisher-win64.zip
+
+  linux:
+    name: Linux (GCC) - engine tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libasound2-dev libx11-dev libxrandr-dev libxinerama-dev \
+            libxcursor-dev libxext-dev libfontconfig1-dev libfreetype-dev libgl1-mesa-dev
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build
+      - name: Validation tests
+        run: ctest --test-dir build --output-on-failure

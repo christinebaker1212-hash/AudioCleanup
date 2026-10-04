@@ -8,6 +8,7 @@
 #include "AudioIO.h"
 
 #include <ac/Pipeline.h>
+#include <ac/StemMixer.h>
 
 #include <juce_core/juce_core.h>
 
@@ -210,4 +211,27 @@ TEST("user presets: JSON round trip")
     CHECK_NEAR(q.compStyle.attackMs, 17, 1e-9);
     CHECK(q.targetOffsets.size() == 2);
     CHECK_NEAR(q.targetOffsets[1].second, -2, 1e-9);
+}
+
+TEST("stem mixer: role-aware stems, buses, master; aligned with the static mix")
+{
+    AudioBuffer vox = ts::pseudoSpeech(SR, 8.0, 91, -24);
+    ts::add(vox, ts::noise(SR, 1, 8.0, -62, 3, true));
+    AudioBuffer music = ts::pseudoMusic(SR, 8.0, 92, -22);
+    AudioBuffer drums = ts::impacts(SR, 1, 8.0, 0.5, 93);
+    StemMixRequest rq;
+    rq.stems.push_back({ &vox, "Lead Vox", guessRole("Lead Vox"), 0.0, 0.0, 0, false, true });
+    rq.stems.push_back({ &music, "Keys", guessRole("Keys"), -3.0, 0.0, 1, false, true });
+    rq.stems.push_back({ &drums, "Drums", guessRole("Drums"), -6.0, 0.2, 1, false, true });
+    CHECK(rq.stems[0].role == StemRole::LeadVocal);
+    CHECK(rq.stems[1].role == StemRole::Keys);
+    CHECK(rq.stems[2].role == StemRole::Drums);
+    rq.masterPreset = findPreset("music.transparent");
+    StemMixResult r = mixStems(rq, {});
+    for (auto& l : r.log) REPORT("%s", l.c_str());
+    CHECK(r.master.output.numChannels() == 2);
+    CHECK_LE(r.master.outputStats.truePeakDb, -1.0 + 0.1);
+    const int lag = ts::bestLag(r.master.reference.vec(0), r.master.output.vec(0), 4000);
+    REPORT("master %.2f LUFS, TP %.2f dBTP, lag vs static mix %d", r.master.outputStats.integrated, r.master.outputStats.truePeakDb, lag);
+    CHECK(lag == 0);
 }

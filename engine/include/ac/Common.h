@@ -3,8 +3,12 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
+#include <cstdlib>
+#include <stdexcept>
 #include <functional>
 #include <limits>
 #include <string>

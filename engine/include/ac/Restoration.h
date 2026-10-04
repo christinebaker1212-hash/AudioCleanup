@@ -178,6 +178,8 @@ struct ClickSettings
     double maxClickMs = 2.0;     ///< longer events are treated as program (not repaired)
     int arOrder = 0;             ///< 0 = automatic from sample rate
     bool protectTransients = true;
+    double minPeakRatio = 1.0;   ///< event peak must exceed threshold by this factor
+    double onsetRatio = 6.0;     ///< median power after/before that marks a programme onset
 };
 
 /** Click/crackle removal: AR(p) forward/backward prediction residual detects

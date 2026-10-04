@@ -447,6 +447,8 @@ double estimateRt60(const std::vector<float>& mono, double sr, double /*noiseDb*
 
 } // namespace
 
+SpectrumInfo longTermSpectrum(const AudioBuffer& b) { return spectrumInfo(b, NoiseProfile{}); }
+
 std::vector<double> bandLevelPercentiles(const AudioBuffer& b, SvfType detector, double freq, double q, double gateDb)
 {
     const double sr = b.sampleRate;
@@ -509,6 +511,18 @@ LevelStats rmsLevelStats(const AudioBuffer& b, double windowMs, double gateDb, d
     st.p90 = percentile(lv, 90); st.p95 = percentile(lv, 95); st.p99 = percentile(lv, 99);
     st.activeFraction = double(lv.size()) / double(std::max<size_t>(1, total));
     return st;
+}
+
+ClickSettings clickSettingsFor(Category c)
+{
+    ClickSettings s;
+    switch (c)
+    {
+        case Category::Voice: s.threshold = 7.0; s.maxClickMs = 2.0; break; // mouth clicks can be longer
+        case Category::SoundEffect: s.threshold = 8.0; s.maxClickMs = 1.0; s.minPeakRatio = 1.3; s.onsetRatio = 4.0; break;
+        case Category::Music: s.threshold = 9.0; s.maxClickMs = 0.5; s.minPeakRatio = 1.5; s.onsetRatio = 3.0; break;
+    }
+    return s;
 }
 
 AnalysisReport analyze(const AudioBuffer& b, Category cat, const Job& job)
@@ -606,7 +620,7 @@ AnalysisReport analyze(const AudioBuffer& b, Category cat, const Job& job)
     job.report(0.35, "Click detection");
     if (r.durationS > 0.5)
     {
-        r.clickCount = ClickRemover::countClicks(mono, b.sampleRate, ClickSettings{}, 60);
+        r.clickCount = ClickRemover::countClicks(mono, b.sampleRate, clickSettingsFor(cat), 60);
         const double analysed = std::min(r.durationS, 60.0);
         r.clicksPerMinute = r.clickCount / std::max(analysed / 60.0, 1.0 / 60.0);
     }

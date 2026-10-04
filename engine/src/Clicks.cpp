@@ -220,7 +220,7 @@ std::vector<Event> detect(const std::vector<double>& x, double sr, const ClickSe
             e.a = std::max(0, e.a);
             e.b = std::min(n - 1, e.b);
             i = lastHit + 1;
-            if (!isolated) continue;
+            if (!isolated || pk < s.minPeakRatio * thr) continue;
             if (e.b - e.a + 1 > maxLen) { ++rejected; continue; }
             if (s.protectTransients)
             {
@@ -232,7 +232,7 @@ std::vector<Event> detect(const std::vector<double>& x, double sr, const ClickSe
                 for (int t = std::max(0, e.a - w); t < e.a; ++t) pre.push_back(x[size_t(t)] * x[size_t(t)]);
                 for (int t = e.b + 1; t < std::min(n, e.b + 1 + w); ++t) post.push_back(x[size_t(t)] * x[size_t(t)]);
                 const double mpre = pre.empty() ? 0.0 : median(pre), mpost = post.empty() ? 0.0 : median(post);
-                if (mpost > 6.0 * mpre + 1e-12) { ++rejected; continue; } // onset: programme, not a click
+                if (mpost > s.onsetRatio * mpre + 1e-12) { ++rejected; continue; } // onset: programme, not a click
             }
             out.push_back(e);
         }

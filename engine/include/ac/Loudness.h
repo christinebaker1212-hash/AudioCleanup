@@ -33,6 +33,9 @@ struct LoudnessCurve
 };
 LoudnessCurve loudnessCurve(const AudioBuffer& b, double hopSeconds = 0.1);
 
+/** True peak (dBTP, 4x oversampled, max over channels) per hop. */
+std::vector<float> truePeakCurve(const AudioBuffer& b, double hopSeconds = 0.1);
+
 /** Incremental meter for live playback metering. */
 class LiveLoudnessMeter
 {

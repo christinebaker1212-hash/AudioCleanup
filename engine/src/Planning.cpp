@@ -281,12 +281,11 @@ void planCleanupTone(Plan& plan, const AnalysisReport& a, const PresetDef& p, co
     // ------------------------------------------------------------ Declick
     {
         auto& sp = plan.stage(StageId::Declick);
+        S.declick = clickSettingsFor(cat);
         S.declick.threshold = p.clickThreshold * (1.25 - 0.25 * cl);
-        S.declick.protectTransients = true;
-        S.declick.maxClickMs = music ? 1.5 : 2.0;
         param(sp, "Threshold", fmt("%.1f residual sigma", S.declick.threshold));
         param(sp, "Max click length", fmt("%.1f ms", S.declick.maxClickMs));
-        param(sp, "Transient protection", "on");
+        param(sp, "Transient protection", fmt("on (onset ratio %.0f, min peak %.1fx threshold)", S.declick.onsetRatio, S.declick.minPeakRatio));
         const bool on = a.clicksPerMinute >= p.clickMinPerMinute;
         decide(sp, on,
                fmt("%.1f impulsive events/min detected (bypass below %.1f/min).", a.clicksPerMinute, p.clickMinPerMinute), uc);

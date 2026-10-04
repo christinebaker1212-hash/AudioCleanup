@@ -1,5 +1,7 @@
 #include "ac/Loudness.h"
 
+#include "ac/Oversampling.h"
+
 #include <ebur128.h>
 
 namespace ac {
@@ -114,6 +116,31 @@ LoudnessCurve loudnessCurve(const AudioBuffer& b, double hopSeconds)
         lc.shortTerm.push_back(float(std::isfinite(st) ? std::max(-200.0, st) : -200.0));
     }
     return lc;
+}
+
+std::vector<float> truePeakCurve(const AudioBuffer& b, double hopSeconds)
+{
+    std::vector<float> out;
+    if (b.empty()) return out;
+    const size_t hop = std::max<size_t>(1, size_t(b.sampleRate * hopSeconds));
+    std::vector<TruePeakDetector> det(size_t(b.numChannels()));
+    for (auto& d : det) d.setup(24);
+    const int lat = det[0].latency();
+    const size_t n = b.numFrames();
+    out.assign((n + hop - 1) / hop, float(kSilenceDb));
+    for (int c = 0; c < b.numChannels(); ++c)
+    {
+        auto& d = det[size_t(c)];
+        const float* x = b.channel(c);
+        for (size_t i = 0; i < n + size_t(lat); ++i)
+        {
+            const double v = d.process(i < n ? x[i] : 0.0);
+            if (i < size_t(lat)) continue;
+            const size_t k = (i - size_t(lat)) / hop;
+            if (k < out.size()) out[k] = std::max(out[k], float(gainToDb(v)));
+        }
+    }
+    return out;
 }
 
 struct LiveLoudnessMeter::Impl

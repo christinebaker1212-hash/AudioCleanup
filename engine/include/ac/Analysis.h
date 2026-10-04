@@ -108,6 +108,11 @@ struct AnalysisReport
 
 AnalysisReport analyze(const AudioBuffer& b, Category cat, const Job& job = {});
 
+/** Click detection criteria per category. Music and effects contain genuine
+    sharp transients (sticks, mallets, plucks), so only very short, strong,
+    non-onset events count as clicks there. */
+ClickSettings clickSettingsFor(Category c);
+
 /** Detector statistics for a band (SVF band-pass, Q, 5 ms power envelope,
     linked across channels) - same detector as DynamicEq. Returns dB
     percentiles {p50, p75, p90, p95, p99} over frames above gateDb. */
@@ -120,6 +125,9 @@ struct LevelStats
     double activeFraction = 0;
 };
 LevelStats rmsLevelStats(const AudioBuffer& b, double windowMs, double gateDb, double hpfHz = 0.0);
+
+/** Long-term average spectrum (active frames) of any buffer. */
+SpectrumInfo longTermSpectrum(const AudioBuffer& b);
 
 /** Human-readable multi-line summary. */
 std::string describe(const AnalysisReport& r);

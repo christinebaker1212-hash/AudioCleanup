@@ -194,7 +194,7 @@ std::vector<PresetDef> build()
         p.name = "Punchy Impact";
         p.description = "Bigger hits: transient emphasis, parallel compression for body, low-end and presence "
                         "lift, saturation for density; tails preserved.";
-        p.loudnessMode = LoudnessMode::MaxMomentary; p.targetLufs = -10.0; p.ceilingDbTP = -1.0; p.maxLimiterGrDb = 4.0;
+        p.loudnessMode = LoudnessMode::MaxMomentary; p.targetLufs = -14.0; p.ceilingDbTP = -1.0; p.maxLimiterGrDb = 5.0;
         p.limiterLookaheadMs = 1.0; p.limiterReleaseMs = 30.0;
         p.maxNoiseReductionDb = 8.0; p.targetNoiseFloorDb = -70.0;
         p.toneStrength = 0.0; p.maxEqBoostDb = 3.0; p.maxEqCutDb = 3.0;
@@ -241,7 +241,7 @@ std::vector<PresetDef> build()
         p.name = "Game Asset Consistency";
         p.description = "Uniform delivery for game assets: consistent peak loudness, true-peak ceiling and gentle "
                         "spectral normalisation. Batch mode aligns a set while keeping intended differences.";
-        p.loudnessMode = LoudnessMode::MaxMomentary; p.targetLufs = -14.0; p.ceilingDbTP = -1.0; p.maxLimiterGrDb = 3.0;
+        p.loudnessMode = LoudnessMode::MaxMomentary; p.targetLufs = -16.0; p.ceilingDbTP = -1.0; p.maxLimiterGrDb = 3.0;
         p.maxNoiseReductionDb = 10.0; p.targetNoiseFloorDb = -72.0;
         p.toneStrength = 0.0; p.maxEqBoostDb = 2.0; p.maxEqCutDb = 3.0;
         p.maxResonanceCuts = 1;
@@ -312,7 +312,7 @@ std::vector<PresetDef> build()
         p.name = "Loud/Dense";
         p.description = "Competitive loudness: multiband density, soft saturation before the limiter, firmer "
                         "limiting within a hard gain-reduction bound.";
-        p.targetLufs = -8.0; p.ceilingDbTP = -1.0; p.maxLimiterGrDb = 7.0;
+        p.targetLufs = -9.0; p.ceilingDbTP = -1.0; p.maxLimiterGrDb = 7.0;
         p.limiterReleaseMs = 50.0;
         p.toneStrength = 0.4; p.maxEqBoostDb = 2.0; p.maxEqCutDb = 3.0;
         p.targetOffsets = { { 50, 0.8 }, { 10000, 0.8 } };
