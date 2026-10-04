@@ -235,3 +235,45 @@ TEST("stem mixer: role-aware stems, buses, master; aligned with the static mix")
     REPORT("master %.2f LUFS, TP %.2f dBTP, lag vs static mix %d", r.master.outputStats.integrated, r.master.outputStats.truePeakDb, lag);
     CHECK(lag == 0);
 }
+
+TEST("formats: MP3 import (bundled decoder) and Ogg Vorbis round trip")
+{
+    // MP3 fixture: 2 s, 1 kHz sine at -6 dBFS, stereo, 44.1 kHz, 192 kbps (LAME).
+    AudioBuffer mp3;
+    std::string err;
+    af::SourceInfo info;
+    const std::string path = std::string(AF_TEST_DATA_DIR) + "/sine1k_stereo_44k1_2s.mp3";
+    CHECK_MSG(af::loadAudio(path, mp3, err, &info), err);
+    REPORT("MP3: %s, %d ch, %.0f Hz, %.3f s", info.formatName.c_str(), mp3.numChannels(), mp3.sampleRate, mp3.durationSeconds());
+    CHECK(mp3.numChannels() == 2);
+    CHECK(mp3.sampleRate == 44100.0);
+    CHECK_NEAR(mp3.durationSeconds(), 2.0, 0.08); // encoder priming/padding
+    if (mp3.numFrames() > 44100)
+    {
+        const double a = ts::toneAmplitude(mp3.channel(0) + 22050, 22050, 1000, 44100);
+        const double thd = ts::thdN(mp3.channel(0) + 22050, 22050, 1000, 44100);
+        REPORT("MP3 decode: 1 kHz at %.2f dBFS (expected -6.02), THD+N %.1f dB", gainToDb(a), thd);
+        CHECK_NEAR(gainToDb(a), -6.02, 0.3);
+        CHECK_LE(thd, -40.0);
+    }
+    CHECK(af::isSupportedExtension("x.mp3") && af::isSupportedExtension("x.OGG") && !af::isSupportedExtension("x.txt"));
+
+    // Ogg Vorbis: encode a processed-like signal, decode, check level/length/spectrum.
+    AudioBuffer src = ts::pseudoMusic(48000, 4.0, 5, -16);
+    const auto dir = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("af_test_ogg");
+    dir.createDirectory();
+    const std::string op = dir.getChildFile("out.ogg").getFullPathName().toStdString();
+    af::ExportOptions ex;
+    ex.format = af::FileFormat::Ogg;
+    CHECK_MSG(af::saveAudio(op, src, ex, err), err);
+    AudioBuffer back;
+    CHECK_MSG(af::loadAudio(op, back, err, &info), err);
+    REPORT("Ogg: %s, %zu -> %zu frames, %d ch; level %.2f -> %.2f dBFS", info.formatName.c_str(), src.numFrames(), back.numFrames(),
+           back.numChannels(), ts::rmsDb(src), ts::rmsDb(back));
+    CHECK(back.numChannels() == 2);
+    CHECK(back.sampleRate == 48000.0);
+    CHECK(std::llabs((long long)back.numFrames() - (long long)src.numFrames()) <= 2048);
+    CHECK_NEAR(ts::rmsDb(back), ts::rmsDb(src), 0.3);
+    CHECK(ts::bestLag(src.vec(0), back.vec(0), 2000) == 0);
+    dir.deleteRecursively();
+}

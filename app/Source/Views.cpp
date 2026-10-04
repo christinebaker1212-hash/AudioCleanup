@@ -20,7 +20,7 @@ void WaveformView::paint(juce::Graphics& g)
     {
         g.setColour(theme::dim);
         g.setFont(theme::font(16));
-        g.drawText("Drop WAV / FLAC / AIFF files here", getLocalBounds(), juce::Justification::centred);
+        g.drawText("Drop WAV / FLAC / AIFF / OGG / MP3 files here", getLocalBounds(), juce::Justification::centred);
         return;
     }
     auto drawWave = [&](const std::vector<float>& mn, const std::vector<float>& mx, juce::Colour c) {

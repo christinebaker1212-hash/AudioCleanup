@@ -14,13 +14,38 @@ juce::AudioFormatManager& manager()
         m.registerFormat(new juce::WavAudioFormat(), true);
         m.registerFormat(new juce::FlacAudioFormat(), false);
         m.registerFormat(new juce::AiffAudioFormat(), false);
+        m.registerFormat(new juce::OggVorbisAudioFormat(), false);
+        m.registerFormat(new juce::MP3AudioFormat(), false);
         init = true;
     }
     return m;
 }
 } // namespace
 
-std::string supportedWildcard() { return "*.wav;*.wave;*.flac;*.aif;*.aiff"; }
+std::string supportedWildcard() { return "*.wav;*.wave;*.flac;*.aif;*.aiff;*.ogg;*.oga;*.mp3"; }
+
+bool isSupportedExtension(const std::string& path)
+{
+    return juce::File(juce::String::fromUTF8(path.c_str())).hasFileExtension("wav;wave;flac;aif;aiff;ogg;oga;mp3");
+}
+
+const char* extensionFor(FileFormat f)
+{
+    switch (f)
+    {
+        case FileFormat::Flac: return ".flac";
+        case FileFormat::Ogg: return ".ogg";
+        case FileFormat::Wav: break;
+    }
+    return ".wav";
+}
+
+std::vector<std::string> oggQualityOptions()
+{
+    std::vector<std::string> out;
+    for (auto& q : juce::OggVorbisAudioFormat().getQualityOptions()) out.push_back(q.toStdString());
+    return out;
+}
 
 bool loadAudio(const std::string& path, ac::AudioBuffer& out, std::string& error, SourceInfo* info)
 {
@@ -73,9 +98,11 @@ bool saveAudio(const std::string& path, const ac::AudioBuffer& b, const ExportOp
     }
     int bits = opt.bitDepth;
     if (opt.format == FileFormat::Flac && bits > 24) bits = 24;
+    if (opt.format == FileFormat::Ogg) bits = 32; // Vorbis encodes from float
     const bool isFloat = bits == 32;
     std::unique_ptr<juce::AudioFormat> fmt;
     if (opt.format == FileFormat::Flac) fmt = std::make_unique<juce::FlacAudioFormat>();
+    else if (opt.format == FileFormat::Ogg) fmt = std::make_unique<juce::OggVorbisAudioFormat>();
     else fmt = std::make_unique<juce::WavAudioFormat>();
 
     auto fileStream = std::make_unique<juce::FileOutputStream>(f);
@@ -89,9 +116,11 @@ bool saveAudio(const std::string& path, const ac::AudioBuffer& b, const ExportOp
                              .withSampleRate(b.sampleRate)
                              .withNumChannels(b.numChannels())
                              .withBitsPerSample(bits)
-                             .withSampleFormat(isFloat ? juce::AudioFormatWriterOptions::SampleFormat::floatingPoint
-                                                       : juce::AudioFormatWriterOptions::SampleFormat::integral)
-                             .withQualityOptionIndex(opt.format == FileFormat::Flac ? 5 : 0);
+                             .withSampleFormat(opt.format == FileFormat::Ogg ? juce::AudioFormatWriterOptions::SampleFormat::automatic
+                                               : isFloat ? juce::AudioFormatWriterOptions::SampleFormat::floatingPoint
+                                                         : juce::AudioFormatWriterOptions::SampleFormat::integral)
+                             .withQualityOptionIndex(opt.format == FileFormat::Flac ? 5
+                                                     : opt.format == FileFormat::Ogg ? juce::jlimit(0, 10, opt.oggQualityIndex) : 0);
     std::unique_ptr<juce::AudioFormatWriter> w = fmt->createWriterFor(stream, options);
     if (!w)
     {

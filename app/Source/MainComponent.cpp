@@ -218,7 +218,7 @@ bool MainComponent::keyPressed(const juce::KeyPress& k)
 bool MainComponent::isInterestedInFileDrag(const juce::StringArray& files)
 {
     for (auto& f : files)
-        if (juce::File(f).hasFileExtension("wav;wave;flac;aif;aiff")) return true;
+        if (af::isSupportedExtension(f.toStdString())) return true;
     return false;
 }
 
@@ -421,7 +421,7 @@ void MainComponent::scheduleAutoRender()
 
 juce::File MainComponent::defaultExportFile(const SessionItem& it, const af::ExportOptions& ex) const
 {
-    const auto ext = ex.format == af::FileFormat::Flac ? ".flac" : ".wav";
+    const auto ext = af::extensionFor(ex.format);
     const auto tag = juce::File::createLegalFileName(it.presetUsed).replaceCharacter(' ', '_').replaceCharacter('/', '-');
     return it.file.getSiblingFile(it.file.getFileNameWithoutExtension() + "_" + tag + ext);
 }
@@ -435,7 +435,7 @@ void MainComponent::exportSelected()
     }
     const auto ex = controls_.exportOptions();
     chooser_ = std::make_unique<juce::FileChooser>("Export processed audio", defaultExportFile(*current_, ex),
-                                                   ex.format == af::FileFormat::Flac ? "*.flac" : "*.wav");
+                                                   juce::String("*") + af::extensionFor(ex.format));
     auto item = current_;
     chooser_->launchAsync(juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting |
                               juce::FileBrowserComponent::canSelectFiles,

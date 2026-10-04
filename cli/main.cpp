@@ -30,7 +30,8 @@ void usage()
         "  compare <candidate> <reference>          measure a result against an approved reference\n"
         "options:\n"
         "  --lufs <v> --ceiling <dBTP> --mode unchanged|peak|integrated|momentary|shortterm\n"
-        "  --sr <Hz> --bits 16|24|32 --format wav|flac --dither none|tpdf|shaped\n"
+        "  --sr <Hz> --bits 16|24|32 --format wav|flac|ogg --ogg-quality 0..10 --dither none|tpdf|shaped\n"
+        "  inputs: WAV, FLAC, AIFF, Ogg Vorbis, MP3\n"
         "  --cleanup <0..2> --tone <0..2> --dynamics <0..2> --tilt <dB>\n"
         "  --on a,b  --off a,b   force stages (keys: filter declip declick dehum denoise neural\n"
         "                        dereverb plosive deess eq dyneq leveler expander transient\n"
@@ -124,7 +125,9 @@ bool controlsFromArgs(const Args& a, UserControls& uc, af::ExportOptions& ex, st
         uc.overrides[*id] = Override::Off;
     }
     ex.bitDepth = a.has("bits") ? std::stoi(a.get("bits")) : 24;
-    ex.format = a.get("format", "wav") == "flac" ? af::FileFormat::Flac : af::FileFormat::Wav;
+    const auto fmtName = a.get("format", "wav");
+    ex.format = fmtName == "flac" ? af::FileFormat::Flac : fmtName == "ogg" ? af::FileFormat::Ogg : af::FileFormat::Wav;
+    if (a.has("ogg-quality")) ex.oggQualityIndex = std::stoi(a.get("ogg-quality"));
     const auto d = a.get("dither", "tpdf");
     ex.dither = d == "none" ? DitherType::None : d == "shaped" ? DitherType::TpdfShaped : DitherType::Tpdf;
     return true;
@@ -334,7 +337,7 @@ int runBatch(const Args& a)
         const auto slash = name.find_last_of("/\\");
         if (slash != std::string::npos) name = name.substr(slash + 1);
         const auto dot = name.find_last_of('.');
-        name = name.substr(0, dot) + (ex.format == af::FileFormat::Flac ? ".flac" : ".wav");
+        name = name.substr(0, dot) + af::extensionFor(ex.format);
         const std::string out = outdir + "/" + name;
         if (!af::saveAudio(out, r.output, ex, err)) std::fprintf(stderr, "%s\n", err.c_str());
         std::printf("%-40s in %7.2f -> target %7.2f -> out %7.2f (%s), TP %.2f\n", name.c_str(), metrics[i], targets[i],

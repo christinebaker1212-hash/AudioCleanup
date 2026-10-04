@@ -117,7 +117,7 @@ ControlsPanel::ControlsPanel()
     opt(optMultiband_, ac::StageId::Multiband);
     opt(optSaturation_, ac::StageId::Saturation);
 
-    format_.addItemList({ "WAV", "FLAC" }, 1);
+    format_.addItemList({ "WAV", "FLAC", "Ogg Vorbis" }, 1);
     format_.setSelectedId(1);
     bits_.addItemList({ "16-bit PCM", "24-bit PCM", "32-bit float" }, 1);
     bits_.setSelectedId(2);
@@ -125,6 +125,11 @@ ControlsPanel::ControlsPanel()
     dither_.setSelectedId(2);
     format_.onChange = [this] {
         if (format_.getSelectedId() == 2 && bits_.getSelectedId() == 3) bits_.setSelectedId(2);
+        // Ogg Vorbis is lossy and encodes from float: bit depth / dither do not apply.
+        const bool ogg = format_.getSelectedId() == 3;
+        bits_.setEnabled(!ogg);
+        dither_.setEnabled(!ogg);
+        bits_.setTooltip(ogg ? "Ogg Vorbis: encoded at ~256 kbps from 32-bit float" : "");
     };
     for (auto* c : { &format_, &bits_, &dither_ }) addAndMakeVisible(*c);
     addAndMakeVisible(export_);
@@ -284,7 +289,7 @@ ac::UserControls ControlsPanel::controls() const
 af::ExportOptions ControlsPanel::exportOptions() const
 {
     af::ExportOptions e;
-    e.format = format_.getSelectedId() == 2 ? af::FileFormat::Flac : af::FileFormat::Wav;
+    e.format = format_.getSelectedId() == 2 ? af::FileFormat::Flac : format_.getSelectedId() == 3 ? af::FileFormat::Ogg : af::FileFormat::Wav;
     e.bitDepth = bits_.getSelectedId() == 1 ? 16 : bits_.getSelectedId() == 2 ? 24 : 32;
     e.dither = dither_.getSelectedId() == 1 ? ac::DitherType::None : dither_.getSelectedId() == 2 ? ac::DitherType::Tpdf : ac::DitherType::TpdfShaped;
     return e;

@@ -77,7 +77,7 @@ For offline builds, point `FETCHCONTENT_SOURCE_DIR_<NAME>` at local checkouts.
 
 | Area | What it does |
 |---|---|
-| File list (left) | Drag & drop or **Add files...** (WAV, FLAC, AIFF). Originals are never modified or overwritten. |
+| File list (left) | Drag & drop or **Add files...** (WAV, FLAC, AIFF, Ogg Vorbis, MP3). Originals are never modified or overwritten. |
 | Category + preset (right) | 15 presets in three families; user presets (★) are saved with **Save preset...** |
 | **PROCESS** | Analyses (cached per file and category) and renders on a background thread with progress and **Cancel**. With *Auto re-render* on, changing any control re-renders after a short pause. |
 | Simple controls | **Cleanup** (repair depth), **Tone** (correction strength + tilt), **Dynamics** (amount), **Output** (loudness mode, target, true-peak ceiling, sample rate). Each section can be switched off. |
@@ -89,7 +89,7 @@ For offline builds, point `FETCHCONTENT_SOURCE_DIR_<NAME>` at local checkouts.
 | Stages (advanced) | Every stage: state, decision and reason, actual DSP settings, and a per-stage override. |
 | Analysis / Decision log | The full source analysis, before/after measurements, every render pass and correction, and stage timings. |
 | Stem mixer | Aligned stems with roles, gain, pan, bus routing, mute, per-stem treatment toggle, bus gain and glue; **MIX + MASTER** renders through the selected Music preset and the Output controls. |
-| Export | WAV 16/24-bit PCM or 32-bit float, FLAC 16/24-bit; TPDF or noise-shaped dither (engine-side, identical to preview). **Process all** and **Export all...** run batches, and **Batch consistency** aligns assets to the group target while keeping a set percentage of their intended differences. |
+| Export | WAV 16/24-bit PCM or 32-bit float, FLAC 16/24-bit, Ogg Vorbis (~256 kbps); TPDF or noise-shaped dither (engine-side, identical to preview). **Process all** and **Export all...** run batches, and **Batch consistency** aligns assets to the group target while keeping a set percentage of their intended differences. |
 
 Command line (same engine): `AudioFinisher file.wav --category voice --preset voice.studio --process`
 opens the GUI with the file loaded and processed.
