@@ -61,6 +61,10 @@ struct PresetDef
     double toneStrength = 0.4;         ///< fraction of deviation from target corrected
     double maxEqBoostDb = 3.0;
     double maxEqCutDb = 4.0;
+    /** Intent guards: automatic boosts above 1.5 kHz and cuts below 300 Hz
+        are additionally bounded (e.g. a "warm" preset never brightens). */
+    double maxHighBoostDb = 99.0;
+    double maxLowCutDb = 99.0;
     std::vector<std::pair<double, double>> targetOffsets; ///< (Hz, dB) intent added to the category curve
     bool useTargetCurve = true;
     int maxResonanceCuts = 0;

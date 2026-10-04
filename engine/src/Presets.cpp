@@ -79,6 +79,7 @@ std::vector<PresetDef> build()
         p.levelerRangeDb = 4.0; p.levelerStrength = 0.5;
         p.compStyle = comp(2.0, 15.0, 180.0, 8.0, DetectorMode::Rms, 10.0, 90.0);
         p.compTargetGrDb = 2.5;
+        p.maxHighBoostDb = 1.5;
         v.push_back(p);
     }
     {
@@ -138,6 +139,7 @@ std::vector<PresetDef> build()
         p.levelerRangeDb = 5.0; p.levelerStrength = 0.6;
         p.compStyle = comp(2.5, 25.0, 250.0, 10.0, DetectorMode::Rms, 20.0, 80.0);
         p.compTargetGrDb = 3.5;
+        p.maxHighBoostDb = 0.5; p.maxLowCutDb = 1.0;
         v.push_back(p);
     }
     {
@@ -289,6 +291,7 @@ std::vector<PresetDef> build()
         p.saturationDriveDb = 3.0; p.saturationAsymmetry = 0.08; p.saturationMix = 0.5;
         p.compStyle = comp(2.0, 30.0, 250.0, 8.0, DetectorMode::Rms, 20.0, 80.0);
         p.compTargetGrDb = 2.5;
+        p.maxHighBoostDb = 0.5; p.maxLowCutDb = 1.0;
         v.push_back(p);
     }
     {
@@ -333,6 +336,7 @@ std::vector<PresetDef> build()
         p.toneStrength = 0.25; p.maxEqBoostDb = 1.0; p.maxEqCutDb = 1.5;
         p.compStyle = comp(1.3, 50.0, 400.0, 12.0, DetectorMode::Rms, 50.0, 60.0);
         p.compTargetGrDb = 0.0;
+        p.maxHighBoostDb = 1.0;
         v.push_back(p);
     }
     return v;
@@ -468,7 +472,7 @@ struct FlatJson
     X(targetNoiseFloorDb) X(minSnrForNoNr) X(denoiseStrength) X(maxActiveLossDb) X(neuralBelowSnrDb) X(neuralMix)     \
     X(sibilanceTargetDb) X(maxDeEssDb) X(maxPlosiveDb) X(hpfMaxHz) X(clickThreshold) X(clickMinPerMinute)             \
     X(humMaxDepthDb) X(dereverbAutoAboveRt60) X(dereverbMaxDb) X(maxNoiseGateDb) X(toneStrength) X(maxEqBoostDb)      \
-    X(maxEqCutDb) X(harshnessRangeDb) X(boomRangeDb) X(saturationDriveDb) X(saturationAsymmetry) X(saturationMix)     \
+    X(maxEqCutDb) X(maxHighBoostDb) X(maxLowCutDb) X(harshnessRangeDb) X(boomRangeDb) X(saturationDriveDb) X(saturationAsymmetry) X(saturationMix)     \
     X(levelerRangeDb) X(levelerStrength) X(transientAttackDb) X(transientSustainDb) X(compTargetGrDb)                  \
     X(mbXoverLowHz) X(mbXoverHighHz)
 } // namespace

@@ -58,8 +58,14 @@ double eqResponseAt(const std::vector<EqBand>& bands, double f, double sr) { ret
 
 /** Fit a small set of broad EQ bands to a deviation curve (dB per 1/3-oct band). */
 std::vector<EqBand> fitEq(const std::vector<double>& hz, std::vector<double> dev, double maxBoost, double maxCut,
-                          double sr, Category cat, double minBellHz)
+                          double sr, Category cat, double minBellHz, double maxHighBoost, double maxLowCut)
 {
+    // Intent guards applied to the target before fitting...
+    for (size_t i = 0; i < hz.size(); ++i)
+    {
+        if (hz[i] >= 1500.0) dev[i] = std::min(dev[i], maxHighBoost);
+        if (hz[i] <= 300.0) dev[i] = std::max(dev[i], -maxLowCut);
+    }
     std::vector<EqBand> bands;
     const size_t n = hz.size();
     auto avg = [&](double lo, double hi) {
@@ -85,8 +91,19 @@ std::vector<EqBand> fitEq(const std::vector<double>& hz, std::vector<double> dev
         double bestAbs = 1.0;
         std::vector<double> res(n);
         for (size_t i = 0; i < n; ++i) res[i] = dev[i] - eqResponseAt(bands, hz[i], sr);
+        auto conflicts = [&](size_t i) {
+            // Never place a bell that fights an existing band within an octave
+            // (opposite-signed overlapping bands waste headroom and smear phase).
+            for (auto& b : bands)
+                if (std::abs(std::log2(hz[i] / b.freq)) < 1.0 && b.gainDb * res[i] < 0) return true;
+            return false;
+        };
         for (size_t i = 0; i < n; ++i)
-            if (!used[i] && hz[i] >= minBellHz && hz[i] <= 7000.0 && std::abs(res[i]) > bestAbs) { bestAbs = std::abs(res[i]); best = i; }
+            if (!used[i] && hz[i] >= minBellHz && hz[i] <= 7000.0 && std::abs(res[i]) > bestAbs && !conflicts(i))
+            {
+                bestAbs = std::abs(res[i]);
+                best = i;
+            }
         if (best == n) break;
         for (size_t j = (best > 0 ? best - 1 : 0); j <= std::min(n - 1, best + 1); ++j) used[j] = true;
         const double g = res[best];
@@ -111,6 +128,12 @@ std::vector<EqBand> fitEq(const std::vector<double>& hz, std::vector<double> dev
     if (-mn > maxCut && mn < 0)
         for (auto& b : bands)
             if (b.gainDb < 0) b.gainDb *= maxCut / -mn;
+    // ...and to the fitted bands (a wide bell can still reach into a guarded region).
+    for (auto& b : bands)
+    {
+        if (b.freq >= 1200.0 && b.gainDb > maxHighBoost) b.gainDb = maxHighBoost;
+        if (b.freq <= 350.0 && b.gainDb < -maxLowCut) b.gainDb = -maxLowCut;
+    }
     std::vector<EqBand> out;
     for (auto& b : bands)
         if (std::abs(b.gainDb) >= 0.3) out.push_back(b);
@@ -497,7 +520,7 @@ void planCleanupTone(Plan& plan, const AnalysisReport& a, const PresetDef& p, co
                 if (voice && si.bandHz[i] < identityHz) sm[i] = 0.0;
                 sm[i] *= p.toneStrength * tn;
             }
-            bands = fitEq(si.bandHz, sm, p.maxEqBoostDb, p.maxEqCutDb, sr, cat, voice ? identityHz : 100.0);
+            bands = fitEq(si.bandHz, sm, p.maxEqBoostDb, p.maxEqCutDb, sr, cat, voice ? identityHz : 100.0, p.maxHighBoostDb, p.maxLowCutDb);
             if (voice) why.push_back(fmt("fundamental region below %.0f Hz left untouched (vocal identity)", identityHz));
             why.push_back(fmt("%.0f%% of the deviation from the %s target corrected (tilt %.1f dB/oct measured)",
                               p.toneStrength * tn * 100, categoryName(cat), si.tiltDbPerOct));
@@ -526,6 +549,9 @@ void planCleanupTone(Plan& plan, const AnalysisReport& a, const PresetDef& p, co
         S.eq = bands;
         param(sp, "Bands", bandsText(bands));
         param(sp, "Bounds", fmt("+%.1f / -%.1f dB", p.maxEqBoostDb, p.maxEqCutDb));
+        if (p.maxHighBoostDb < 50 || p.maxLowCutDb < 50)
+            param(sp, "Intent guards", fmt("boost >1.5 kHz <= %.1f dB, cut <300 Hz <= %.1f dB", std::min(p.maxHighBoostDb, p.maxEqBoostDb),
+                                           std::min(p.maxLowCutDb, p.maxEqCutDb)));
         std::string w;
         for (auto& s : why) w += s + "; ";
         bool any = false;

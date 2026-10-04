@@ -351,8 +351,8 @@ ProcessResult process(const ProcessRequest& req, const Job& job)
             const double gate = rmsLevelStats(preComp, 50.0, -90.0).p75 - 30.0;
             S.compressor.thresholdDb = compressorThreshold(preComp, S.compressor, compTarget, gate, &p95);
             S.compressor.maxGrDb = std::max(S.compressor.maxGrDb, compTarget * 2.5);
-            const std::string msg = fmt("Correction: target needs %.1f dB limiting (> %.1f bound) -> compressor GR target %.1f dB, threshold %.1f dB.",
-                                        need, P.maxLimiterGrDb, compTarget, S.compressor.thresholdDb);
+            const std::string msg = fmt("Correction: target would need %.1f dB limiting (aim %.1f dB = 75%% of the %.1f dB bound) -> compressor GR target %.1f dB, threshold %.1f dB.",
+                                        need, aim, P.maxLimiterGrDb, compTarget, S.compressor.thresholdDb);
             cs.reason += " " + msg;
             for (auto& kv : cs.params)
                 if (kv.first == "Threshold") kv.second = fmt("%.1f dB", S.compressor.thresholdDb);
