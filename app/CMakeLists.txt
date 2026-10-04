@@ -14,7 +14,8 @@ target_sources(AudioFinisher PRIVATE
   Source/StageTable.cpp
   Source/ControlsPanel.cpp
   Source/StemMixerPanel.cpp
-  Source/UserPresets.cpp)
+  Source/UserPresets.cpp
+  Source/Settings.cpp)
 
 target_compile_definitions(AudioFinisher PRIVATE
   JUCE_USE_CURL=0

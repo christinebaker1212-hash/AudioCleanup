@@ -89,6 +89,7 @@ For offline builds, point `FETCHCONTENT_SOURCE_DIR_<NAME>` at local checkouts.
 | Stages (advanced) | Every stage: state, decision and reason, actual DSP settings, and a per-stage override. |
 | Analysis / Decision log | The full source analysis, before/after measurements, every render pass and correction, and stage timings. |
 | Stem mixer | Aligned stems with roles, gain, pan, bus routing, mute, per-stem treatment toggle, bus gain and glue; **MIX + MASTER** renders through the selected Music preset and the Output controls. |
+| Display scaling | Fits the screen at any Windows scaling (125 %, 150 %...); the right panel scrolls when the window is short and the toolbar wraps when narrow. **Interface size** (70–120 %, bottom of the right panel) shrinks or enlarges the whole UI on top of Windows scaling and is remembered. |
 | Export | WAV 16/24-bit PCM or 32-bit float, FLAC 16/24-bit, Ogg Vorbis (~256 kbps); TPDF or noise-shaped dither (engine-side, identical to preview). **Process all** and **Export all...** run batches, and **Batch consistency** aligns assets to the group target while keeping a set percentage of their intended differences. |
 
 Command line (same engine): `AudioFinisher file.wav --category voice --preset voice.studio --process`

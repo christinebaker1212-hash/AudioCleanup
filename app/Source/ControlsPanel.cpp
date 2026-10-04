@@ -1,4 +1,5 @@
 #include "ControlsPanel.h"
+#include "Settings.h"
 
 namespace {
 const double kRates[] = { 0.0, 44100.0, 48000.0, 88200.0, 96000.0 };
@@ -148,6 +149,25 @@ ControlsPanel::ControlsPanel()
     preserve_.setTextValueSuffix("% kept");
     preserve_.setTooltip("Fraction of each asset's loudness difference from the group median that is kept (intended differences).");
     addAndMakeVisible(preserve_);
+
+    uiSizeL_.setText("Interface size", juce::dontSendNotification);
+    uiSizeL_.setFont(theme::font(12));
+    uiSizeL_.setColour(juce::Label::textColourId, theme::dim);
+    addAndMakeVisible(uiSizeL_);
+    int sel = 4;
+    for (int i = 0; i < int(std::size(settings::kUiScales)); ++i)
+    {
+        uiSize_.addItem(juce::String(juce::roundToInt(settings::kUiScales[i] * 100)) + " %" + (settings::kUiScales[i] == 1.0 ? " (OS scaling only)" : ""), i + 1);
+        if (std::abs(settings::kUiScales[i] - settings::uiScale()) < 0.01) sel = i + 1;
+    }
+    uiSize_.setSelectedId(sel, juce::dontSendNotification);
+    uiSize_.setTooltip("Scales the whole interface on top of the Windows display scaling. Use a smaller size if parts do not fit.");
+    uiSize_.onChange = [this] {
+        const double s = settings::kUiScales[juce::jlimit(0, int(std::size(settings::kUiScales)) - 1, uiSize_.getSelectedId() - 1)];
+        settings::setUiScale(s);
+        if (onUiScale) onUiScale(s);
+    };
+    addAndMakeVisible(uiSize_);
 
     rebuildPresetList();
 }
@@ -381,4 +401,10 @@ void ControlsPanel::resized()
         preserve_.setBounds(c);
     }
     audio_.setBounds(row(24));
+    {
+        auto c = row(24);
+        uiSizeL_.setBounds(c.removeFromLeft(110));
+        uiSize_.setBounds(c);
+    }
+    contentHeight_ = r.getY() + 8;
 }

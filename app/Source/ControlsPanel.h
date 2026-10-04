@@ -31,6 +31,10 @@ public:
     // ---- callbacks
     std::function<void()> onProcess, onCancel, onExport, onProcessAll, onExportAll, onControlsChanged, onCategoryChanged,
         onAudioSettings;
+    std::function<void(double)> onUiScale;
+
+    /** Height the content needs at the current width (the panel scrolls when taller than the view). */
+    int contentHeight() const { return contentHeight_; }
 
     void resized() override;
     void paint(juce::Graphics& g) override;
@@ -68,6 +72,9 @@ private:
     juce::ComboBox format_, bits_, dither_;
     juce::TextButton export_{ "Export..." }, processAll_{ "Process all" }, exportAll_{ "Export all..." }, audio_{ "Audio device..." };
     juce::ToggleButton consistency_{ "Batch consistency" };
+    juce::Label uiSizeL_;
+    juce::ComboBox uiSize_;
+    int contentHeight_ = 800;
     juce::Slider preserve_;
     std::unique_ptr<juce::AlertWindow> nameDialog_;
 };

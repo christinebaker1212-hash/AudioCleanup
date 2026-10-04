@@ -1,4 +1,5 @@
 #include "MainComponent.h"
+#include "Settings.h"
 
 #include <ac/StemMixer.h>
 
@@ -113,7 +114,16 @@ MainComponent::MainComponent()
     };
     stemPanel_.onMix = [this] { runStemMix(); };
 
-    addAndMakeVisible(controls_);
+    // The controls panel scrolls vertically when the window is shorter than
+    // its content (small screens, high display scaling).
+    controlsView_.setViewedComponent(&controls_, false);
+    controlsView_.setScrollBarsShown(true, false);
+    controlsView_.setScrollBarThickness(10);
+    addAndMakeVisible(controlsView_);
+    controls_.onUiScale = [this](double s) {
+        juce::Desktop::getInstance().setGlobalScaleFactor(float(s));
+        if (auto* w = getTopLevelComponent()) settings::fitToScreen(*w, w->getWidth(), w->getHeight(), false);
+    };
     controls_.onProcess = [this] { processSelected(); };
     controls_.onCancel = [this] { worker_.cancelAll(); };
     controls_.onExport = [this] { exportSelected(); };
@@ -169,31 +179,56 @@ void MainComponent::onMessageThread(std::function<void()> fn)
 void MainComponent::resized()
 {
     auto r = getLocalBounds();
-    auto top = r.removeFromTop(44).reduced(8, 7);
-    title_.setBounds(top.removeFromLeft(170));
-    addFiles_.setBounds(top.removeFromLeft(100));
-    top.removeFromLeft(4);
-    removeFile_.setBounds(top.removeFromLeft(70));
-    top.removeFromLeft(20);
-    play_.setBounds(top.removeFromLeft(64));
-    top.removeFromLeft(4);
-    stop_.setBounds(top.removeFromLeft(56));
-    top.removeFromLeft(14);
-    abProc_.setBounds(top.removeFromLeft(96));
-    abOrig_.setBounds(top.removeFromLeft(86));
-    abRemoved_.setBounds(top.removeFromLeft(116));
-    top.removeFromLeft(10);
-    matched_.setBounds(top.removeFromLeft(178));
-    loop_.setBounds(top.removeFromLeft(62));
-    clearRegion_.setBounds(top.removeFromLeft(140));
 
-    controls_.setBounds(r.removeFromRight(380));
-    auto left = r.removeFromLeft(250);
+    // ---- Toolbar: one row when it fits, otherwise two rows (narrow windows /
+    // high display scaling). Widths shrink proportionally if still too wide.
+    struct Item { juce::Component* c; int w; int gapBefore; };
+    const std::vector<Item> row1 = { { &title_, 160, 0 }, { &addFiles_, 100, 0 }, { &removeFile_, 70, 4 }, { &play_, 64, 16 }, { &stop_, 56, 4 } };
+    const std::vector<Item> row2 = { { &abProc_, 96, 14 }, { &abOrig_, 86, 0 }, { &abRemoved_, 116, 0 }, { &matched_, 178, 10 },
+                                     { &loop_, 62, 0 }, { &clearRegion_, 140, 4 } };
+    auto widthOf = [](const std::vector<Item>& v) { int t = 0; for (auto& i : v) t += i.w + i.gapBefore; return t; };
+    auto layoutRow = [](juce::Rectangle<int> area, const std::vector<Item>& v, int total) {
+        const double k = std::min(1.0, double(area.getWidth()) / std::max(1, total));
+        for (auto& i : v)
+        {
+            area.removeFromLeft(int(i.gapBefore * k));
+            i.c->setBounds(area.removeFromLeft(int(i.w * k)));
+        }
+    };
+    const int full = widthOf(row1) + widthOf(row2);
+    if (full <= getWidth() - 16)
+    {
+        auto top = r.removeFromTop(44).reduced(8, 7);
+        std::vector<Item> all(row1);
+        all.insert(all.end(), row2.begin(), row2.end());
+        layoutRow(top, all, full);
+    }
+    else
+    {
+        auto a = r.removeFromTop(38).reduced(8, 5);
+        auto b = r.removeFromTop(36).reduced(8, 4);
+        layoutRow(a, row1, widthOf(row1));
+        auto r2 = row2;
+        r2.front().gapBefore = 0;
+        layoutRow(b, r2, widthOf(r2));
+    }
+
+    // ---- Side panels scale with the window; the controls panel scrolls.
+    const int rightW = juce::jlimit(330, 380, int(getWidth() * 0.26));
+    auto right = r.removeFromRight(rightW);
+    controlsView_.setBounds(right);
+    controls_.setBounds(0, 0, right.getWidth(), 2000); // lay out once to measure
+    const int needH = controls_.contentHeight();
+    const bool scroll = needH > right.getHeight();
+    controls_.setSize(right.getWidth() - (scroll ? controlsView_.getScrollBarThickness() : 0), std::max(needH, right.getHeight()));
+
+    const int leftW = juce::jlimit(150, 250, int(getWidth() * 0.16));
+    auto left = r.removeFromLeft(leftW);
     fileList_.setBounds(left.reduced(6));
     hint_.setBounds(r.removeFromBottom(22).reduced(6, 0));
     auto centre = r.reduced(6);
     auto upper = centre.removeFromTop(int(centre.getHeight() * 0.52));
-    auto meterArea = upper.removeFromRight(250);
+    auto meterArea = upper.removeFromRight(juce::jlimit(170, 250, int(upper.getWidth() * 0.28)));
     waveform_.setBounds(upper.removeFromTop(int(upper.getHeight() * 0.58)));
     upper.removeFromTop(4);
     spectrum_.setBounds(upper);
@@ -671,6 +706,13 @@ void MainComponent::handleCommandLine(const juce::StringArray& args)
         }
         else if (a == "--mix") script_.mix = true;
         else if (a == "--tab" && i + 1 < args.size()) tabs_.setCurrentTabIndex(args[++i].getIntValue());
+        else if (a == "--scale" && i + 1 < args.size()) ++i; // applied at startup (Main.cpp)
+        else if (a == "--window" && i + 1 < args.size())
+        {
+            const auto wh = juce::StringArray::fromTokens(args[++i], "x", "");
+            if (wh.size() == 2)
+                if (auto* w = getTopLevelComponent()) w->setSize(wh[0].getIntValue(), wh[1].getIntValue());
+        }
         else if (!a.startsWith("--") && juce::File::getCurrentWorkingDirectory().getChildFile(a).existsAsFile())
             files.add(juce::File::getCurrentWorkingDirectory().getChildFile(a));
     }

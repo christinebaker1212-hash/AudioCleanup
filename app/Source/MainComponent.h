@@ -80,6 +80,7 @@ private:
     juce::TextEditor analysisText_, logText_;
     StemMixerPanel stemPanel_;
     ControlsPanel controls_;
+    juce::Viewport controlsView_;
     juce::Label hint_;
 
     std::unique_ptr<juce::FileChooser> chooser_;
