@@ -453,6 +453,62 @@ ProcessResult process(const ProcessRequest& req, const Job& job)
             }
             if (!changed) break;
         }
+        // Loud presets may drive a bounded amount into an oversampled soft
+        // clipper ahead of the limiter when the limiter bound alone cannot
+        // reach the target (clip depth <= preset maxClipDb, logged).
+        double clipDrive = 0.0;
+        const bool loudMode = mode == LoudnessMode::Integrated || mode == LoudnessMode::MaxShortTerm || mode == LoudnessMode::MaxMomentary;
+        if (!R.targetReached && loudMode && P.maxClipDb > 0 && uc.dynamics > 0)
+        {
+            // Clipper asymptote sits above the final ceiling by part of the
+            // limiter's budget; the limiter then only catches what remains.
+            const double clipCeil = plan.ceilingDbTP + 0.5 * P.maxLimiterGrDb;
+            double g2 = gain, ceil2 = ceil;
+            double lo = gain - 2.0 * P.maxClipDb, hi = std::numeric_limits<double>::quiet_NaN(); // bracket on drive
+            bool accepted = false;
+            for (int it = 0; it < 10; ++it)
+            {
+                SoftClipper clip(g2, clipCeil);
+                RenderOptions ro;
+                AudioBuffer xc = renderProcessor(clip, x, ro, sub);
+                const double clipP99 = grP99(clip.grTrace()->values());
+                ChainSettings S2 = S;
+                S2.limiter.inputGainDb = 0.0;
+                S2.limiter.ceilingDbTP = ceil2;
+                StageMetrics m2;
+                AudioBuffer y2 = runStage(StageId::Limiter, S2, xc, m2, nullptr, holder, sub);
+                LoudnessStats ys2;
+                const double ym2 = loudnessMetric(y2, mode, &ys2);
+                const double limP99 = grP99(m2.grTrace);
+                plan.log.push_back(fmt("Clip pass %d: gain %+.2f dB into soft clipper (asymptote %.2f dBTP): clip GR P99 %.2f dB, limiter GR P99 %.2f dB -> %s %.2f, TP %.2f.",
+                                       it + 1, g2, clipCeil, clipP99, limP99, loudnessModeName(mode), ym2, ys2.truePeakDb));
+                if (ys2.truePeakDb > plan.ceilingDbTP + 0.05)
+                {
+                    ceil2 -= ys2.truePeakDb - plan.ceilingDbTP + 0.03;
+                    continue;
+                }
+                const bool within = clipP99 <= P.maxClipDb + 0.1 && limP99 <= P.maxLimiterGrDb + 0.1;
+                if (within && ym2 > ym + 0.05)
+                {
+                    y = std::move(y2);
+                    ym = ym2;
+                    ys = ys2;
+                    m = m2;
+                    p99 = limP99;
+                    clipDrive = clipP99;
+                    accepted = true;
+                }
+                const double err = plan.targetLufs - ym2;
+                if (within && std::abs(err) <= 0.15) break;
+                if (within && err < 0) hi = g2; // overshot the target
+                else if (within) lo = g2;
+                else hi = g2;
+                const double next = std::isnan(hi) ? g2 + err : 0.5 * (lo + hi);
+                if (!std::isnan(hi) && hi - lo < 0.1) break;
+                g2 = next;
+            }
+            if (accepted) R.targetReached = std::abs(plan.targetLufs - ym) <= 0.3;
+        }
         R.output = std::move(y);
         R.outputLoudnessValue = ym;
         R.metrics.push_back(m);
@@ -467,7 +523,11 @@ ProcessResult process(const ProcessRequest& req, const Job& job)
         lim.params.emplace_back("Release", fmt("%.0f ms fast / %.0f ms sustained", L.releaseFastMs, L.releaseSlowMs));
         lim.params.emplace_back("Detection", "4x oversampled true peak, linked");
         lim.params.emplace_back("GR bound", fmt("P99 <= %.1f dB", P.maxLimiterGrDb));
-        lim.reason = fmt("%s %.2f -> %.2f; limiter GR P99 %.2f dB (bound %.1f).", loudnessModeName(mode), metric, ym, p99, P.maxLimiterGrDb);
+        if (P.maxClipDb > 0)
+            lim.params.emplace_back("Soft clip", clipDrive > 0 ? fmt("4x oversampled soft clipper, GR P99 %.2f dB (bound %.1f dB)", clipDrive, P.maxClipDb)
+                                                               : std::string("not used"));
+        lim.reason = fmt("%s %.2f -> %.2f; limiter GR P99 %.2f dB (bound %.1f)%s.", loudnessModeName(mode), metric, ym, p99, P.maxLimiterGrDb,
+                         clipDrive > 0 ? fmt("; soft clipper GR P99 %.1f dB", clipDrive).c_str() : "");
         if (!R.targetReached)
         {
             lim.reason += fmt(" Target %.1f not reachable within the preset's limiting bound; delivered %.2f.", plan.targetLufs, ym);

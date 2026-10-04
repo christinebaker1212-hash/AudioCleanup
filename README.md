@@ -22,6 +22,13 @@ analyse source ─► select treatment ─► render ─► measure output ─�
 Every decision (stage on or off, each derived setting, and the reason) appears in the
 **Stages (advanced)** panel and in the **Decision log**.
 
+![Studio Voiceover: stages, reasons and actual DSP settings](docs/screenshots/voice-studio-stages.png)
+
+More screenshots: [music mastering](docs/screenshots/music-warm.png),
+[noisy-voice rescue with the analysis panel and original A/B](docs/screenshots/voice-rescue-analysis.png),
+[stem mixer](docs/screenshots/stem-mixer.png). All were captured from the real app running
+headless under Xvfb.
+
 ---
 
 ## Building
@@ -46,7 +53,7 @@ Outputs (static CRT, so no VC++ redistributable is needed):
 * `build\cli\af_cli_artefacts\Release\*.exe`: command-line renderer
 * `build\tests\af_tests_artefacts\Release\*.exe`: DSP validation suite
 
-**Prebuilt release:** the GitHub Actions workflow
+**Prebuilt release:** the GitHub Actions workflow (green on `windows-2022`)
 [`.github/workflows/build.yml`](.github/workflows/build.yml) builds on
 `windows-2022` with MSVC, runs the validation suite, and uploads
 `AudioFinisher-win64.zip` as a build artifact on every push. Pushing a tag `v*`
@@ -119,7 +126,7 @@ loudness-matched, latency-aligned original for external A/B listening.
 | Music | Transparent Master | −14 LUFS / −1 dBTP | minimal broad correction |
 | | Warm/Glue | −12 LUFS | bus glue, subtle saturation |
 | | Punchy | −11 LUFS | transient-friendly compression |
-| | Loud/Dense | −9 LUFS | multiband + soft saturation + firmer limiting (bounded) |
+| | Loud/Dense | −9 LUFS | multiband, soft saturation, bounded soft clipping, firmer limiting |
 | | Dynamic/Open | −16 LUFS | preserves crest factor |
 
 Each preset bounds automatic EQ boost and cut, noise attenuation, compressor and limiter

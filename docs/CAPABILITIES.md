@@ -31,6 +31,7 @@ the algorithm named here.
 | Loudness (BS.1770-4 / EBU R128) | libebur128: integrated, LRA, momentary, short-term | Verified: EBU Tech 3341 stereo sine −23/−20 dBFS read −22.99/−19.99 LUFS |
 | True peak | 4× oversampled (libebur128 meter + own 4× polyphase detector for the limiter) | Verified: fs/4 45° sine reads within 0.11 dB of the true peak; the detector never under-reads |
 | True-peak limiter | 4× oversampled detection, sliding-minimum hold + matched box filter (the gain is down before the peak), program-dependent release, linked | Verified: ≤ 0.008 dB overshoot on music, fs/4 sines, 19 kHz bursts, squares and impacts at −1 and −0.1 dBTP; bit-exact below the ceiling; THD+N −152 dB on a sustained over |
+| Soft clipper (Loud/Dense only) | 4× oversampled tanh-knee clipper ahead of the limiter. Engages only when the limiter bound alone cannot reach the target; clip and limiter gain reduction are bounded separately (P99) and found by bracketed search | Verified (real material): a jazz track reaches −9.05 LUFS with clip 2.9 dB and limiter 3.5 dB P99; a very dynamic drum & bass track stops at −11.2 LUFS at the 3 dB clip bound and is reported as not reached |
 | Loudness targeting loop | Render → measure → correct gain/ceiling (≤ 6 passes); compressor feedback when the limiter bound would be exceeded; honest "not reached" reporting | Verified: all 15 presets on synthetic material and real speech/music |
 | Resampling | r8brain-free-src, 24-bit profile (180 dB), linear phase | Verified: 44.1↔48↔96 kHz level ±0.0000 dB, THD+N ≤ −150 dB, timing exact |
 | Dither / export | TPDF (2 LSB p-p) and 3-tap F-weighted noise shaping (44.1/48 kHz); WAV 16/24/32f, FLAC 16/24 | Verified: TPDF level −96.35 dBFS (theory −96.33); shaping lowers 3 kHz error 4.9 dB; 24-bit WAV/FLAC round trip identical to the engine quantiser |
@@ -88,16 +89,17 @@ the algorithm named here.
   sufficient. Commercial-grade sound is an acceptance target that must be confirmed through
   blind, loudness-matched listening with [`LISTENING.md`](LISTENING.md). No engineer-approved
   reference outputs were supplied, so none were compared.
-- **Loud/Dense and very dynamic material:** limiting is bounded (7 dB P99 for Loud/Dense), so a
-  very dynamic drum & bass track stops near −12 LUFS rather than −9. The report says so. There is
-  no dedicated clipper stage beyond the soft-saturation stage.
+- **Loud/Dense and very dynamic material:** limiting (7 dB P99) and soft clipping (3 dB P99) are
+  both bounded, so a very dynamic drum & bass track stops near −11 LUFS rather than −9. The report
+  says so. Raise `maxClipDb` / `maxLimiterGrDb` in a user preset to trade density for loudness.
 - **RT60 estimation** is blind and coarse; de-reverb strength is bounded to compensate.
 - **Hum** harmonics masked by programme are left in place by design: depth never exceeds the
   measured prominence.
 - **Neural enhancer** is RNNoise (small, fast, speech-only). Heavier models such as DeepFilterNet
   are not bundled.
-- **Windows build:** produced by GitHub Actions (MSVC). It was not built or run on a Windows
-  machine by the author; Linux builds and the GUI were exercised headless (Xvfb).
+- **Windows build:** produced by GitHub Actions (MSVC, windows-2022). The full validation suite
+  passes there. The Windows GUI has not been operated interactively; the GUI was exercised
+  headless on Linux (Xvfb) through its scripting options, with screenshots in `docs/screenshots`.
 - **Stem alignment** assumes stems share a common start; there is no automatic offset detection.
 - **Monitoring** resamples to the device rate with r8brain once per render. Changing the device
   rate re-prepares the monitor buffers.

@@ -34,6 +34,7 @@ struct PresetDef
     double maxLimiterGrDb = 3.0;     ///< bound on limiter gain reduction (P99 of active hops)
     double limiterLookaheadMs = 2.0;
     double limiterReleaseMs = 60.0;
+    double maxClipDb = 0.0;          ///< extra drive allowed into a soft clipper before the limiter (0 = never clip)
 
     // ---- Cleanup bounds
     bool denoiseDefault = true;

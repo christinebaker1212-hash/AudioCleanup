@@ -37,6 +37,8 @@ private:
     void selectedRowsChanged(int lastRowSelected) override;
 
     void timerCallback() override;
+    /** Run fn on the message thread if this component still exists. */
+    void onMessageThread(std::function<void()> fn);
 
     void addFiles(const juce::Array<juce::File>& files, bool asStems);
     void selectItem(std::shared_ptr<SessionItem> item);

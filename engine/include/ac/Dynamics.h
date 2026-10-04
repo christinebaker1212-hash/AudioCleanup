@@ -197,6 +197,26 @@ private:
     GrTrace trace_;
 };
 
+/** 4x oversampled soft clipper: linear below knee*ceiling, tanh-shaped above,
+    asymptotic to the ceiling (continuous slope at the knee). Used ahead of
+    the limiter only when a loud preset cannot reach its target otherwise. */
+class SoftClipper : public Processor
+{
+public:
+    SoftClipper(double inputGainDb, double ceilingDb, double knee = 0.8) : gainDb_(inputGainDb), ceilDb_(ceilingDb), knee_(knee) {}
+    void prepare(double sr, int ch) override;
+    int latency() const override { return os_.empty() ? 0 : os_[0].latency(); }
+    void process(float* const* ch, int nch, int n) override;
+    const GrTrace* grTrace() const override { return &trace_; }
+    double shape(double x) const;
+
+private:
+    double gainDb_, ceilDb_, knee_;
+    double g_ = 1, c_ = 1, k_ = 0.8;
+    std::vector<Oversampler> os_;
+    GrTrace trace_;
+};
+
 struct LevelerSettings
 {
     double targetDb = -20.0;      ///< short-term K-weighted level to ride toward

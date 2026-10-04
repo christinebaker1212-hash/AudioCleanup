@@ -324,6 +324,7 @@ std::vector<PresetDef> build()
         p.compStyle = comp(2.0, 20.0, 200.0, 8.0, DetectorMode::Rms, 15.0, 80.0);
         p.compTargetGrDb = 2.5;
         p.multibandDefault = true; p.mbTargetGrDb[0] = 3.0; p.mbTargetGrDb[1] = 2.5; p.mbTargetGrDb[2] = 3.0;
+        p.maxClipDb = 3.0;
         v.push_back(p);
     }
     {
@@ -468,7 +469,7 @@ struct FlatJson
 };
 
 #define AC_NUM_FIELDS(X)                                                                                              \
-    X(targetLufs) X(ceilingDbTP) X(maxLimiterGrDb) X(limiterLookaheadMs) X(limiterReleaseMs) X(maxNoiseReductionDb)   \
+    X(targetLufs) X(ceilingDbTP) X(maxLimiterGrDb) X(limiterLookaheadMs) X(limiterReleaseMs) X(maxClipDb) X(maxNoiseReductionDb)   \
     X(targetNoiseFloorDb) X(minSnrForNoNr) X(denoiseStrength) X(maxActiveLossDb) X(neuralBelowSnrDb) X(neuralMix)     \
     X(sibilanceTargetDb) X(maxDeEssDb) X(maxPlosiveDb) X(hpfMaxHz) X(clickThreshold) X(clickMinPerMinute)             \
     X(humMaxDepthDb) X(dereverbAutoAboveRt60) X(dereverbMaxDb) X(maxNoiseGateDb) X(toneStrength) X(maxEqBoostDb)      \

@@ -62,8 +62,8 @@ private:
     juce::Slider cleanup_, tone_, tilt_, dynamics_, target_, ceiling_;
     juce::Label cleanupL_, toneL_, tiltL_, dynL_, targetL_, ceilingL_, modeL_, srL_;
     juce::ComboBox mode_, sampleRate_;
-    juce::ToggleButton optNeural_{ "Neural speech enhancer" }, optDereverb_{ "De-reverb" }, optMultiband_{ "Multiband" },
-        optSaturation_{ "Saturation" };
+    juce::ToggleButton optNeural_{ "Force neural enhancer" }, optDereverb_{ "Force de-reverb" }, optMultiband_{ "Force multiband" },
+        optSaturation_{ "Force saturation" };
 
     juce::ComboBox format_, bits_, dither_;
     juce::TextButton export_{ "Export..." }, processAll_{ "Process all" }, exportAll_{ "Export all..." }, audio_{ "Audio device..." };

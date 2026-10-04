@@ -366,6 +366,42 @@ void TruePeakLimiter::process(float* const* ch, int nch, int n)
     }
 }
 
+// --------------------------------------------------------------- SoftClipper
+void SoftClipper::prepare(double sr, int ch)
+{
+    g_ = dbToGain(gainDb_);
+    c_ = dbToGain(ceilDb_);
+    k_ = clampv(knee_, 0.3, 0.99) * c_;
+    os_.assign(size_t(ch), Oversampler{});
+    for (auto& o : os_) o.setup(4, 32);
+    trace_.reset(sr);
+}
+
+double SoftClipper::shape(double x) const
+{
+    const double a = std::abs(x);
+    if (a <= k_) return x;
+    const double r = c_ - k_;
+    return (x > 0 ? 1.0 : -1.0) * (k_ + r * std::tanh((a - k_) / r));
+}
+
+void SoftClipper::process(float* const* ch, int nch, int n)
+{
+    auto f = [this](double v) { return shape(v); };
+    for (int i = 0; i < n; ++i)
+    {
+        // Static-curve reduction at this sample (for the GR trace / bound).
+        double red = 0.0;
+        for (int c = 0; c < nch; ++c)
+        {
+            const double v = std::abs(double(ch[c][i]) * g_);
+            if (v > k_) red = std::max(red, gainToDb(v) - gainToDb(std::abs(shape(v))));
+            ch[c][i] = float(os_[size_t(c)].process(double(ch[c][i]) * g_, f));
+        }
+        trace_.push(float(red));
+    }
+}
+
 // ------------------------------------------------------------------- Leveler
 void Leveler::processOffline(AudioBuffer& b, const Job& job)
 {

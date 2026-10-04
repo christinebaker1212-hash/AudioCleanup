@@ -159,6 +159,13 @@ MainComponent::~MainComponent()
 
 void MainComponent::paint(juce::Graphics& g) { g.fillAll(theme::bg); }
 
+void MainComponent::onMessageThread(std::function<void()> fn)
+{
+    juce::MessageManager::callAsync([safe = juce::Component::SafePointer<MainComponent>(this), fn = std::move(fn)] {
+        if (safe) fn();
+    });
+}
+
 void MainComponent::resized()
 {
     auto r = getLocalBounds();
@@ -261,7 +268,7 @@ void MainComponent::addFiles(const juce::Array<juce::File>& files, bool asStems)
             }
             if (asStems)
             {
-                juce::MessageManager::callAsync([this, f, buf] { stemPanel_.addStem(f, buf); });
+                onMessageThread([this, f, buf] { stemPanel_.addStem(f, buf); });
                 return;
             }
             auto item = std::make_shared<SessionItem>();
@@ -273,7 +280,7 @@ void MainComponent::addFiles(const juce::Array<juce::File>& files, bool asStems)
             item->playback = buildPlaybackOriginal(*buf, rate, job);
             item->playbackDeviceRate = rate;
             item->status = juce::String(info.bitsPerSample) + (info.floatingPoint ? "-bit float" : "-bit") + ", not processed";
-            juce::MessageManager::callAsync([this, item] {
+            onMessageThread([this, item] {
                 items_.push_back(item);
                 fileList_.updateContent();
                 if (!current_)
@@ -315,9 +322,12 @@ void MainComponent::ensurePlayback(std::shared_ptr<SessionItem> item)
 {
     const double rate = player_.deviceRate();
     if (!item || std::abs(item->playbackDeviceRate - rate) < 0.5) return;
-    worker_.post("Preparing monitor", [this, item, rate](const ac::Job& job) {
-        std::shared_ptr<PlaybackSet> p = item->result ? buildPlayback(*item->result, rate, job) : buildPlaybackOriginal(*item->audio, rate, job);
-        juce::MessageManager::callAsync([this, item, p, rate] {
+    item->playbackDeviceRate = rate; // claim: avoid queuing duplicates
+    auto result = item->result;
+    auto audio = item->audio;
+    worker_.post("Preparing monitor", [this, item, rate, result, audio](const ac::Job& job) {
+        std::shared_ptr<PlaybackSet> p = result ? buildPlayback(*result, rate, job) : buildPlaybackOriginal(*audio, rate, job);
+        onMessageThread([this, item, p, rate] {
             item->playback = p;
             item->playbackDeviceRate = rate;
             if (item == current_) player_.setSet(p);
@@ -336,16 +346,19 @@ void MainComponent::processItem(std::shared_ptr<SessionItem> item, std::optional
     const ac::Category cat = controls_.category();
     item->status = "processing...";
     fileList_.repaint();
-    worker_.post("Processing " + item->file.getFileName(), [this, item, presetCopy, uc, cat, then](const ac::Job& job) {
-        auto analysis = item->analysis;
-        if (!analysis || item->analysisCategory != cat)
+    // Snapshot on the message thread: the task never reads mutable item state.
+    auto cachedAnalysis = item->analysisCategory == cat ? item->analysis : nullptr;
+    auto audio = item->audio;
+    worker_.post("Processing " + item->file.getFileName(), [this, item, audio, cachedAnalysis, presetCopy, uc, cat, then](const ac::Job& job) {
+        auto analysis = cachedAnalysis;
+        if (!analysis)
         {
             ac::Job aj = job;
             aj.progress = [&job](double f, const std::string& w) { job.report(0.25 * f, "Analysing: " + w); };
-            analysis = std::make_shared<const ac::AnalysisReport>(ac::analyze(*item->audio, cat, aj));
+            analysis = std::make_shared<const ac::AnalysisReport>(ac::analyze(*audio, cat, aj));
         }
         ac::ProcessRequest rq;
-        rq.input = item->audio.get();
+        rq.input = audio.get();
         rq.preset = &presetCopy;
         rq.category = cat;
         rq.controls = uc;
@@ -355,10 +368,10 @@ void MainComponent::processItem(std::shared_ptr<SessionItem> item, std::optional
         auto result = std::make_shared<ac::ProcessResult>(ac::process(rq, pj));
         result->plan.preset = nullptr; // presetCopy dies with this task
         job.report(0.92, "Preparing display");
-        auto display = buildDisplay(*result, *item->audio);
+        auto display = buildDisplay(*result, *audio);
         const double rate = player_.deviceRate();
         auto pb = buildPlayback(*result, rate, job);
-        juce::MessageManager::callAsync([this, item, analysis, result, display, pb, rate, cat, name = presetCopy.name, then] {
+        onMessageThread([this, item, analysis, result, display, pb, rate, cat, name = presetCopy.name, then] {
             item->analysis = analysis;
             item->analysisCategory = cat;
             item->result = result;
@@ -439,7 +452,7 @@ void MainComponent::exportSelected()
                               worker_.post("Exporting " + f.getFileName(), [this, f, result, ex](const ac::Job&) {
                                   std::string err;
                                   const bool ok = af::saveAudio(f.getFullPathName().toStdString(), result->output, ex, err);
-                                  juce::MessageManager::callAsync([this, ok, err, f] {
+                                  onMessageThread([this, ok, err, f] {
                                       hint_.setText(ok ? "Exported " + f.getFullPathName() : "Export failed: " + juce::String(err),
                                                     juce::dontSendNotification);
                                   });
@@ -473,7 +486,7 @@ void MainComponent::processAll(bool exportToo, juce::File folder)
             worker_.post("Exporting " + dst.getFileName(), [this, dst, result, ex](const ac::Job&) {
                 std::string err;
                 const bool ok = af::saveAudio(dst.getFullPathName().toStdString(), result->output, ex, err);
-                juce::MessageManager::callAsync([this, ok, err, dst] {
+                onMessageThread([this, ok, err, dst] {
                     hint_.setText(ok ? "Exported " + dst.getFullPathName() : "Export failed: " + juce::String(err), juce::dontSendNotification);
                 });
             });
@@ -517,7 +530,7 @@ void MainComponent::runStemMix()
         const double rate = player_.deviceRate();
         auto pb = buildPlayback(*result, rate, job);
         auto mixAudio = std::make_shared<ac::AudioBuffer>(result->reference);
-        juce::MessageManager::callAsync([this, result, display, pb, rate, mixAudio, name = master.name] {
+        onMessageThread([this, result, display, pb, rate, mixAudio, name = master.name] {
             if (!stemItem_)
             {
                 stemItem_ = std::make_shared<SessionItem>();
@@ -657,6 +670,7 @@ void MainComponent::handleCommandLine(const juce::StringArray& args)
             tabs_.setCurrentTabIndex(3);
         }
         else if (a == "--mix") script_.mix = true;
+        else if (a == "--tab" && i + 1 < args.size()) tabs_.setCurrentTabIndex(args[++i].getIntValue());
         else if (!a.startsWith("--") && juce::File::getCurrentWorkingDirectory().getChildFile(a).existsAsFile())
             files.add(juce::File::getCurrentWorkingDirectory().getChildFile(a));
     }

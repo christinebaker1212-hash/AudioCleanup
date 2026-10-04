@@ -8,24 +8,24 @@
       Stereo(width 1)              max |diff| = 0
       Expander(below floor)        max |diff| = 0
       TransientShaper(0 dB)        max |diff| = 0
-[  OK  ] bypass transparency: neutral processors are bit-exact (205 ms)
+[  OK  ] bypass transparency: neutral processors are bit-exact (200 ms)
 [ RUN  ] bypass transparency: STFT engine reconstructs perfectly at unity gain
       STFT round-trip residual -139.4 dB re signal
-[  OK  ] bypass transparency: STFT engine reconstructs perfectly at unity gain (148 ms)
+[  OK  ] bypass transparency: STFT engine reconstructs perfectly at unity gain (145 ms)
 [ RUN  ] EQ response: SVF bands match analytic response, bell/shelf gains exact
       max |measured - analytic| = 0.0000 dB over 20 Hz - 22 kHz
-[  OK  ] EQ response: SVF bands match analytic response, bell/shelf gains exact (121 ms)
+[  OK  ] EQ response: SVF bands match analytic response, bell/shelf gains exact (123 ms)
 [ RUN  ] EQ response: Butterworth high-pass -3 dB at fc and correct slope
       order 2: -3.01 dB @fc, -12.30 dB @fc/2 (theory -12.30), -24.10 dB @fc/4 (theory -24.10)
       order 3: -3.01 dB @fc, -18.13 dB @fc/2 (theory -18.13), -36.13 dB @fc/4 (theory -36.12)
       order 4: -3.01 dB @fc, -24.10 dB @fc/2 (theory -24.10), -48.17 dB @fc/4 (theory -48.16)
       order 8: -3.01 dB @fc, -48.17 dB @fc/2 (theory -48.16), -96.34 dB @fc/4 (theory -96.33)
-[  OK  ] EQ response: Butterworth high-pass -3 dB at fc and correct slope (60 ms)
+[  OK  ] EQ response: Butterworth high-pass -3 dB at fc and correct slope (61 ms)
 [ RUN  ] EQ: DC offset is removed exactly
 [  OK  ] EQ: DC offset is removed exactly (2 ms)
 [ RUN  ] multiband crossover: bands sum flat (allpass) within 0.01 dB
       max deviation 0.0000 dB (LR4 120 Hz / 2.5 kHz, allpass compensated)
-[  OK  ] multiband crossover: bands sum flat (allpass) within 0.01 dB (66 ms)
+[  OK  ] multiband crossover: bands sum flat (allpass) within 0.01 dB (67 ms)
 [ RUN  ] dynamic EQ: band cut follows level, bounded by range
       loud 3 kHz tone reduced by 6.00 dB (range 6 dB)
 [  OK  ] dynamic EQ: band cut follows level, bounded by range (7 ms)
@@ -50,14 +50,14 @@
       square 649 Hz        ceiling -0.1 -> TP -0.188 dBTP (overshoot -0.088 dB)
       impacts              ceiling -1.0 -> TP -0.994 dBTP (overshoot 0.006 dB)
       impacts              ceiling -0.1 -> TP -0.094 dBTP (overshoot 0.006 dB)
-[  OK  ] limiter: true-peak ceiling holds (no overshoot) on hostile material (752 ms)
+[  OK  ] limiter: true-peak ceiling holds (no overshoot) on hostile material (737 ms)
 [ RUN  ] limiter: transparent below ceiling, low distortion when limiting sustained tones
       sustained 1 kHz +5 dBFS -> level -1.00 dBFS, THD+N -151.8 dB
-[  OK  ] limiter: transparent below ceiling, low distortion when limiting sustained tones (27 ms)
+[  OK  ] limiter: transparent below ceiling, low distortion when limiting sustained tones (31 ms)
 [ RUN  ] limiter + compressor + saturator: latency compensated (impulse stays put)
-[  OK  ] limiter + compressor + saturator: latency compensated (impulse stays put) (19 ms)
+[  OK  ] limiter + compressor + saturator: latency compensated (impulse stays put) (21 ms)
 [ RUN  ] block-size independence: identical output for any block partitioning
-[  OK  ] block-size independence: identical output for any block partitioning (533 ms)
+[  OK  ] block-size independence: identical output for any block partitioning (547 ms)
 [ RUN  ] oversampler: flat passband, integer latency, alias rejection
       15 kHz through 4x up/down: 0.0001 dB, latency 32
       aliased 5th harmonic at 13 kHz: -122.3 dB
@@ -67,31 +67,31 @@
       48000 -> 44100: level 0.0000 dB, THD+N -150.9 dB, marker at 44100 (expect 44100)
       48000 -> 96000: level 0.0000 dB, THD+N -152.0 dB, marker at 96000 (expect 96000)
       96000 -> 44100: level 0.0000 dB, THD+N -152.1 dB, marker at 44100 (expect 44100)
-[  OK  ] resampling: level, frequency, timing and THD+N (25 ms)
+[  OK  ] resampling: level, frequency, timing and THD+N (26 ms)
 [ RUN  ] dither: TPDF level, shaped spectrum, determinism
       16-bit TPDF on silence: -96.35 dBFS (theory -96.33)
       3 kHz band error: flat -104.0 dB, shaped -108.9 dB
-[  OK  ] dither: TPDF level, shaped spectrum, determinism (5 ms)
+[  OK  ] dither: TPDF level, shaped spectrum, determinism (6 ms)
 [ RUN  ] loudness: EBU Tech 3341 reference levels and true peak
       stereo 1 kHz sine at -23 dBFS -> -22.99 LUFS
       stereo 1 kHz sine at -20 dBFS -> -19.99 LUFS
       fs/4 sine @45deg: sample peak -9.03 dBFS, true peak -5.92 dBTP (A = -6.02)
-[  OK  ] loudness: EBU Tech 3341 reference levels and true peak (401 ms)
+[  OK  ] loudness: EBU Tech 3341 reference levels and true peak (368 ms)
 [ RUN  ] loudness: silence and very short clips are handled
 [  OK  ] loudness: silence and very short clips are handled (2 ms)
 [ RUN  ] noise profile: estimated floor matches the true noise level
       white noise -55 dBFS -> estimated -55.05 dBFS, flatness 0.98, stationarity 1.00
       pink noise -55 dBFS -> estimated -55.69 dBFS, flatness 0.44, stationarity 1.00
-[  OK  ] noise profile: estimated floor matches the true noise level (79 ms)
+[  OK  ] noise profile: estimated floor matches the true noise level (82 ms)
 [ RUN  ] denoiser: reduction depth, speech preservation, no musical noise
       pink noise -50 dBFS: gaps -50.1 -> -62.7 dB (12.6 dB reduction, bound 15); SNR 30.0 -> 33.1 dB
          active level change -0.01 dB; speech leakage into removed 0.001; residual roughness 6.61 dB vs noise 6.63 dB
       pink noise -35 dBFS: gaps -35.1 -> -47.5 dB (12.4 dB reduction, bound 15); SNR 15.0 -> 19.1 dB
          active level change -0.14 dB; speech leakage into removed 0.021; residual roughness 6.59 dB vs noise 6.63 dB
-[  OK  ] denoiser: reduction depth, speech preservation, no musical noise (8213 ms)
+[  OK  ] denoiser: reduction depth, speech preservation, no musical noise (8384 ms)
 [ RUN  ] denoiser: adaptive tracking follows a noise level change
       after +12 dB noise step: 9.6 dB reduction in gaps
-[  OK  ] denoiser: adaptive tracking follows a noise level change (5534 ms)
+[  OK  ] denoiser: adaptive tracking follows a noise level change (5685 ms)
 [ RUN  ] hum: detection of 60 Hz / drifting 50 Hz series and removal depth
       f0 60.00: detected 1 at 59.995 Hz with 3 harmonics
          harmonic 1 (detected): 52.1 dB reduction
@@ -103,31 +103,31 @@
          harmonic 2 (detected): 42.5 dB reduction
          harmonic 3 (detected): 21.7 dB reduction
          harmonic 5 (detected): 14.1 dB reduction
-[  OK  ] hum: detection of 60 Hz / drifting 50 Hz series and removal depth (1384 ms)
+[  OK  ] hum: detection of 60 Hz / drifting 50 Hz series and removal depth (1419 ms)
 [ RUN  ] clicks: detection, AR repair accuracy, no false repairs on speech/transients
       30 clicks inserted: 29 repair operations, 29 clicks restored to < -40 dB error, total click error reduced 14.8 dB
       (a click within a few ms after a drum onset is deliberately left: it is masked and indistinguishable from the attack)
       clean speech: 1 repairs (4 onsets protected)
       clean impacts: 0 repairs (9 onsets protected)
-[  OK  ] clicks: detection, AR repair accuracy, no false repairs on speech/transients (421 ms)
+[  OK  ] clicks: detection, AR repair accuracy, no false repairs on speech/transients (439 ms)
 [ RUN  ] declip: reconstruction error reduced
       440 runs; clipping error -29.7 dB -> -71.1 dB
-[  OK  ] declip: reconstruction error reduced (27 ms)
+[  OK  ] declip: reconstruction error reduced (26 ms)
 [ RUN  ] plosives: synthetic pops detected and attenuated, clean speech untouched
       5 events; LF energy in pops reduced by 7.0 dB
       clean pseudo-speech: 0 events, max diff 0
-[  OK  ] plosives: synthetic pops detected and attenuated, clean speech untouched (68 ms)
+[  OK  ] plosives: synthetic pops detected and attenuated, clean speech untouched (70 ms)
 [ RUN  ] de-esser: sibilants reduced, vowels unaffected
       sibilant bursts reduced 6.0 dB; voiced passages changed -0.02 dB; max GR 8.0 dB
 [  OK  ] de-esser: sibilants reduced, vowels unaffected (67 ms)
 [ RUN  ] dereverb: RT60 estimate and late tail suppression
       RT60 true 0.80 s, estimated 1.28 s
       reverb tail in gaps reduced 8.1 dB; active level change -1.06 dB
-[  OK  ] dereverb: RT60 estimate and late tail suppression (4845 ms)
+[  OK  ] dereverb: RT60 estimate and late tail suppression (4939 ms)
 [ RUN  ] neural speech enhancer: latency compensated, noise reduced
       alignment lag 0 samples; gap noise -40.4 -> -69.7 dB
       44.1 kHz lag 0
-[  OK  ] neural speech enhancer: latency compensated, noise reduced (4703 ms)
+[  OK  ] neural speech enhancer: latency compensated, noise reduced (4916 ms)
 [ RUN  ] pipeline: every preset meets its true-peak ceiling and loudness target (or reports why not)
       voice.natural      Voice Clip     -> Integrated -23.00 (target -23.0), TP -2.18 (ceiling -2.0), LRA 3.4
       voice.studio       Voice Clip     -> Integrated -16.37 (target -16.0, NOT reached: bound), TP -1.03 (ceiling -1.0), LRA 1.0
@@ -142,32 +142,32 @@
       music.transparent  Music          -> Integrated -14.29 (target -14.0, NOT reached: bound), TP -0.99 (ceiling -1.0), LRA 0.6
       music.warm         Music          -> Integrated -14.36 (target -12.0, NOT reached: bound), TP -0.99 (ceiling -1.0), LRA 0.8
       music.punchy       Music          -> Integrated -15.18 (target -11.0, NOT reached: bound), TP -0.99 (ceiling -1.0), LRA 1.1
-      music.loud         Music          -> Integrated -11.60 (target -9.0, NOT reached: bound), TP -0.99 (ceiling -1.0), LRA 1.1
+      music.loud         Music          -> Integrated -10.79 (target -9.0, NOT reached: bound), TP -0.99 (ceiling -1.0), LRA 0.8
       music.dynamic      Music          -> Integrated -16.00 (target -16.0), TP -0.99 (ceiling -1.0), LRA 0.6
-[  OK  ] pipeline: every preset meets its true-peak ceiling and loudness target (or reports why not) (19498 ms)
+[  OK  ] pipeline: every preset meets its true-peak ceiling and loudness target (or reports why not) (21330 ms)
 [ RUN  ] pipeline: all sections off is an exact pass-through
-[  OK  ] pipeline: all sections off is an exact pass-through (379 ms)
+[  OK  ] pipeline: all sections off is an exact pass-through (363 ms)
 [ RUN  ] pipeline: channel configuration, length and timing preserved
       1 channels: lag 0 samples, length 144000 -> 144000
       2 channels: lag 0 samples, length 144000 -> 144000
       5 channels: lag 0 samples, length 144000 -> 144000
       voice.studio 48k -> 44.1k: lag vs reference 0 samples
-[  OK  ] pipeline: channel configuration, length and timing preserved (6637 ms)
+[  OK  ] pipeline: channel configuration, length and timing preserved (6543 ms)
 [ RUN  ] pipeline: silence and very short clips
       80 ms blip, sfx.punchy: mode Max momentary, TP -1.00 dBTP
       80 ms blip, sfx.game: mode Max momentary, TP -1.00 dBTP
       80 ms blip, voice.natural: mode Integrated, TP -2.00 dBTP
       80 ms blip, music.transparent: mode Integrated, TP -1.00 dBTP
-[  OK  ] pipeline: silence and very short clips (52 ms)
+[  OK  ] pipeline: silence and very short clips (47 ms)
 [ RUN  ] pipeline: preview/export consistency (float bit-exact, PCM = engine dither)
       WAV 24-bit round trip max diff vs engine quantiser: 0
       FLAC 24-bit round trip max diff vs engine quantiser: 0
-[  OK  ] pipeline: preview/export consistency (float bit-exact, PCM = engine dither) (2294 ms)
+[  OK  ] pipeline: preview/export consistency (float bit-exact, PCM = engine dither) (2202 ms)
 [ RUN  ] pipeline: user overrides, macros and cancellation
-[  OK  ] pipeline: user overrides, macros and cancellation (2502 ms)
+[  OK  ] pipeline: user overrides, macros and cancellation (2461 ms)
 [ RUN  ] pipeline: removed-noise audition signal is the exact cleanup difference
       removed signal level -32.3 dBFS (input noise -58 dBFS)
-[  OK  ] pipeline: removed-noise audition signal is the exact cleanup difference (930 ms)
+[  OK  ] pipeline: removed-noise audition signal is the exact cleanup difference (920 ms)
 [ RUN  ] batch consistency: pulls toward the group target, keeps a fraction of differences
 [  OK  ] batch consistency: pulls toward the group target, keeps a fraction of differences (0 ms)
 [ RUN  ] user presets: JSON round trip
@@ -179,6 +179,6 @@
       Bus 'Vocals': glue 2:1, threshold -34.7 dB (~1.5 dB GR on loud passages), max GR 1.7 dB
       Bus 'Music': glue 2:1, threshold -22.7 dB (~1.5 dB GR on loud passages), max GR 1.3 dB
       master -15.03 LUFS, TP -0.99 dBTP, lag vs static mix 0
-[  OK  ] stem mixer: role-aware stems, buses, master; aligned with the static mix (5322 ms)
+[  OK  ] stem mixer: role-aware stems, buses, master; aligned with the static mix (5267 ms)
 
 39 cases, 10172391 checks, 0 failed checks, 0 failed cases
