@@ -4,6 +4,7 @@
 #include "AudioIO.h"
 
 #include <ac/Pipeline.h>
+#include <ac/Fft.h>
 #include <ac/Resampler.h>
 
 #include <chrono>
@@ -208,37 +209,33 @@ int runCompare(const Args& a)
     std::string err;
     if (!af::loadAudio(a.pos[0], cand, err) || !af::loadAudio(a.pos[1], ref, err)) { std::fprintf(stderr, "%s\n", err.c_str()); return 1; }
     if (std::abs(cand.sampleRate - ref.sampleRate) > 0.5) cand = resample(cand, ref.sampleRate);
-    // Alignment by cross-correlation of the first channel (+/- 0.5 s).
+    // Alignment by GCC-PHAT (whitened cross-correlation): robust when one
+    // signal has been equalised, compressed, denoised or dereverberated.
     const auto mc = cand.mixdown(), mr = ref.mixdown();
     const int maxLag = int(0.5 * ref.sampleRate);
-    const size_t n = std::min<size_t>(std::min(mc.size(), mr.size()), size_t(ref.sampleRate * 30));
-    int lag = 0;
-    double best = -1e300;
-    // Coarse-to-fine: FFT-free direct search on a decimated envelope, then exact refine.
+    int N = 1 << 12;
+    const size_t span = std::min<size_t>(std::min(mc.size(), mr.size()), size_t(1) << 20);
+    while (size_t(N) < 2 * span && N < (1 << 22)) N <<= 1;
+    RealFft fft(N);
+    std::vector<float> bufA(static_cast<size_t>(N), 0.0f), bufB(static_cast<size_t>(N), 0.0f);
+    std::copy(mr.begin(), mr.begin() + long(span), bufA.begin());
+    std::copy(mc.begin(), mc.begin() + long(span), bufB.begin());
+    std::vector<std::complex<float>> A(static_cast<size_t>(N / 2 + 1)), B(static_cast<size_t>(N / 2 + 1));
+    fft.forward(bufA.data(), A.data());
+    fft.forward(bufB.data(), B.data());
+    for (size_t k = 0; k < A.size(); ++k)
     {
-        best = -1e300;
-        for (int L = -maxLag; L <= maxLag; L += 8)
-        {
-            double sum = 0;
-            for (size_t i = 0; i < n; i += 8)
-            {
-                const long j = long(i) + L;
-                if (j >= 0 && size_t(j) < mc.size()) sum += double(mr[i]) * mc[size_t(j)];
-            }
-            if (sum > best) { best = sum; lag = L; }
-        }
-        const int c0 = lag;
-        best = -1e300;
-        for (int L = c0 - 8; L <= c0 + 8; ++L)
-        {
-            double sum = 0;
-            for (size_t i = 0; i < n; ++i)
-            {
-                const long j = long(i) + L;
-                if (j >= 0 && size_t(j) < mc.size()) sum += double(mr[i]) * mc[size_t(j)];
-            }
-            if (sum > best) { best = sum; lag = L; }
-        }
+        const std::complex<float> c = std::conj(A[k]) * B[k];
+        const float m = std::abs(c);
+        A[k] = m > 1e-20f ? c / m : std::complex<float>(0.0f, 0.0f);
+    }
+    fft.inverse(A.data(), bufA.data());
+    int lag = 0;
+    float best = -1e30f;
+    for (int L = -maxLag; L <= maxLag; ++L)
+    {
+        const float v = bufA[size_t((L + N) % N)];
+        if (v > best) { best = v; lag = L; }
     }
     AudioBuffer aligned(cand.numChannels(), ref.numFrames(), ref.sampleRate);
     for (int c = 0; c < cand.numChannels(); ++c)
