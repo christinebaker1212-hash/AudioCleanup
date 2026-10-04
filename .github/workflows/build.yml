@@ -6,6 +6,11 @@ on:
     tags: ['v*']
   pull_request:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Publish a GitHub Release with this tag (e.g. v0.1.0); leave empty for a plain build"
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -49,11 +54,13 @@ jobs:
           name: AudioFinisher-win64
           path: AudioFinisher-win64.zip
 
-      - name: Publish release (tags v*)
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Publish release (tags v*, or manual run with release_tag)
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
         uses: softprops/action-gh-release@v2
         with:
-          name: AudioFinisher ${{ github.ref_name }}
+          tag_name: ${{ inputs.release_tag || github.ref_name }}
+          target_commitish: ${{ github.sha }}
+          name: AudioFinisher ${{ inputs.release_tag || github.ref_name }}
           body_path: docs/RELEASE-NOTES.md
           files: AudioFinisher-win64.zip
 
