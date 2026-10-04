@@ -1,0 +1,287 @@
+// AudioFinisher command-line renderer: same engine as the GUI, for batch work,
+// automated listening sets and regression tests.
+
+#include "AudioIO.h"
+
+#include <ac/Pipeline.h>
+#include <ac/Resampler.h>
+
+#include <chrono>
+#include <cstdio>
+#include <cstring>
+#include <fstream>
+#include <iostream>
+#include <map>
+#include <sstream>
+
+using namespace ac;
+
+namespace {
+
+void usage()
+{
+    std::puts(
+        "AudioFinisherCLI\n"
+        "  presets                                   list presets\n"
+        "  analyze <in> [--category voice|sfx|music]\n"
+        "  process <in> <out> --preset <id> [options]\n"
+        "  batch <outdir> <in...> --preset <id> [--consistency 0..1] [options]\n"
+        "options:\n"
+        "  --lufs <v> --ceiling <dBTP> --mode unchanged|peak|integrated|momentary|shortterm\n"
+        "  --sr <Hz> --bits 16|24|32 --format wav|flac --dither none|tpdf|shaped\n"
+        "  --cleanup <0..2> --tone <0..2> --dynamics <0..2> --tilt <dB>\n"
+        "  --on a,b  --off a,b   force stages (keys: filter declip declick dehum denoise neural\n"
+        "                        dereverb plosive deess eq dyneq leveler expander transient\n"
+        "                        compressor multiband saturation stereo limiter)\n"
+        "  --no-cleanup --no-tone --no-dynamics --no-output\n"
+        "  --noise-region <startSec>:<endSec>\n"
+        "  --removed <file>  --reference <file> (loudness-matched original)  --plan (print plan)\n"
+        "  --user-preset <json>  load a user preset file instead of --preset");
+}
+
+Category parseCategory(const std::string& s)
+{
+    if (s == "sfx" || s == "effect") return Category::SoundEffect;
+    if (s == "music") return Category::Music;
+    return Category::Voice;
+}
+
+struct Args
+{
+    std::vector<std::string> pos;
+    std::map<std::string, std::string> opt;
+    bool has(const std::string& k) const { return opt.count(k) > 0; }
+    std::string get(const std::string& k, const std::string& d = "") const
+    {
+        auto it = opt.find(k);
+        return it == opt.end() ? d : it->second;
+    }
+};
+
+Args parse(int argc, char** argv)
+{
+    Args a;
+    for (int i = 2; i < argc; ++i)
+    {
+        std::string s = argv[i];
+        if (s.rfind("--", 0) == 0)
+        {
+            const std::string k = s.substr(2);
+            const bool flag = k == "plan" || k.rfind("no-", 0) == 0;
+            if (!flag && i + 1 < argc) a.opt[k] = argv[++i];
+            else a.opt[k] = "1";
+        }
+        else a.pos.push_back(s);
+    }
+    return a;
+}
+
+std::vector<std::string> split(const std::string& s)
+{
+    std::vector<std::string> out;
+    std::stringstream ss(s);
+    std::string t;
+    while (std::getline(ss, t, ','))
+        if (!t.empty()) out.push_back(t);
+    return out;
+}
+
+bool controlsFromArgs(const Args& a, UserControls& uc, af::ExportOptions& ex, std::string& err)
+{
+    if (a.has("lufs")) uc.targetLufs = std::stod(a.get("lufs"));
+    if (a.has("ceiling")) uc.ceilingDbTP = std::stod(a.get("ceiling"));
+    if (a.has("mode"))
+    {
+        const auto m = a.get("mode");
+        if (m == "unchanged") uc.loudnessMode = LoudnessMode::Unchanged;
+        else if (m == "peak") uc.loudnessMode = LoudnessMode::Peak;
+        else if (m == "integrated") uc.loudnessMode = LoudnessMode::Integrated;
+        else if (m == "momentary") uc.loudnessMode = LoudnessMode::MaxMomentary;
+        else if (m == "shortterm") uc.loudnessMode = LoudnessMode::MaxShortTerm;
+        else { err = "bad --mode"; return false; }
+    }
+    if (a.has("sr")) uc.outputSampleRate = std::stod(a.get("sr"));
+    if (a.has("cleanup")) uc.cleanup = std::stod(a.get("cleanup"));
+    if (a.has("tone")) uc.tone = std::stod(a.get("tone"));
+    if (a.has("dynamics")) uc.dynamics = std::stod(a.get("dynamics"));
+    if (a.has("tilt")) uc.tiltDb = std::stod(a.get("tilt"));
+    uc.sectionOn[0] = !a.has("no-cleanup");
+    uc.sectionOn[1] = !a.has("no-tone");
+    uc.sectionOn[2] = !a.has("no-dynamics");
+    uc.sectionOn[3] = !a.has("no-output");
+    for (auto& k : split(a.get("on")))
+    {
+        auto id = stageFromKey(k);
+        if (!id) { err = "unknown stage " + k; return false; }
+        uc.overrides[*id] = Override::On;
+    }
+    for (auto& k : split(a.get("off")))
+    {
+        auto id = stageFromKey(k);
+        if (!id) { err = "unknown stage " + k; return false; }
+        uc.overrides[*id] = Override::Off;
+    }
+    ex.bitDepth = a.has("bits") ? std::stoi(a.get("bits")) : 24;
+    ex.format = a.get("format", "wav") == "flac" ? af::FileFormat::Flac : af::FileFormat::Wav;
+    const auto d = a.get("dither", "tpdf");
+    ex.dither = d == "none" ? DitherType::None : d == "shaped" ? DitherType::TpdfShaped : DitherType::Tpdf;
+    return true;
+}
+
+const PresetDef* resolvePreset(const Args& a, PresetDef& storage, std::string& err)
+{
+    if (a.has("user-preset"))
+    {
+        std::ifstream f(a.get("user-preset"));
+        std::stringstream ss;
+        ss << f.rdbuf();
+        if (!presetFromJson(ss.str(), storage, &err)) return nullptr;
+        return &storage;
+    }
+    const PresetDef* p = findPreset(a.get("preset", "voice.natural"));
+    if (!p) err = "unknown preset " + a.get("preset");
+    return p;
+}
+
+int runProcess(const Args& a)
+{
+    if (a.pos.size() < 2) { usage(); return 2; }
+    std::string err;
+    PresetDef userP;
+    const PresetDef* P = resolvePreset(a, userP, err);
+    if (!P) { std::fprintf(stderr, "%s\n", err.c_str()); return 2; }
+    AudioBuffer in;
+    if (!af::loadAudio(a.pos[0], in, err)) { std::fprintf(stderr, "%s\n", err.c_str()); return 1; }
+    ProcessRequest rq;
+    rq.input = &in;
+    rq.preset = P;
+    rq.category = P->category;
+    af::ExportOptions ex;
+    if (!controlsFromArgs(a, rq.controls, ex, err)) { std::fprintf(stderr, "%s\n", err.c_str()); return 2; }
+    if (a.has("noise-region"))
+    {
+        const auto r = a.get("noise-region");
+        const auto c = r.find(':');
+        const double s0 = std::stod(r.substr(0, c)), s1 = std::stod(r.substr(c + 1));
+        rq.controls.noiseRegion = std::make_pair(size_t(s0 * in.sampleRate), size_t(s1 * in.sampleRate));
+    }
+    Job job;
+    int lastPct = -1;
+    job.progress = [&](double f, const std::string& w) {
+        const int pct = int(f * 100);
+        if (pct / 10 != lastPct / 10) std::fprintf(stderr, "  %3d%% %s\n", pct, w.c_str());
+        lastPct = pct;
+    };
+    const auto t0 = std::chrono::steady_clock::now();
+    ProcessResult r = process(rq, job);
+    const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    if (a.has("plan")) std::printf("%s\n", describePlan(r.plan).c_str());
+    if (!af::saveAudio(a.pos[1], r.output, ex, err)) { std::fprintf(stderr, "%s\n", err.c_str()); return 1; }
+    if (a.has("removed"))
+    {
+        af::ExportOptions fx;
+        fx.bitDepth = 32;
+        af::saveAudio(a.get("removed"), r.removed, fx, err);
+    }
+    if (a.has("reference"))
+    {
+        AudioBuffer ref = r.reference;
+        ref.applyGain(dbToGain(r.matchGainDb));
+        af::ExportOptions fx;
+        fx.bitDepth = 32;
+        af::saveAudio(a.get("reference"), ref, fx, err);
+    }
+    std::printf("%s -> %s  [%s]  in %.2f LUFS / %.2f dBTP  ->  out %.2f LUFS / %.2f dBTP / LRA %.1f  (%.2fx realtime)\n",
+                a.pos[0].c_str(), a.pos[1].c_str(), P->name.c_str(), r.referenceStats.integrated, r.referenceStats.truePeakDb,
+                r.outputStats.integrated, r.outputStats.truePeakDb, r.outputStats.lra, in.durationSeconds() / std::max(secs, 1e-6));
+    return 0;
+}
+
+int runBatch(const Args& a)
+{
+    if (a.pos.size() < 2) { usage(); return 2; }
+    std::string err;
+    PresetDef userP;
+    const PresetDef* P = resolvePreset(a, userP, err);
+    if (!P) { std::fprintf(stderr, "%s\n", err.c_str()); return 2; }
+    const std::string outdir = a.pos[0];
+    std::vector<std::string> files(a.pos.begin() + 1, a.pos.end());
+    UserControls base;
+    af::ExportOptions ex;
+    if (!controlsFromArgs(a, base, ex, err)) { std::fprintf(stderr, "%s\n", err.c_str()); return 2; }
+    const bool consistency = a.has("consistency");
+    const double preserve = consistency ? std::stod(a.get("consistency")) : 1.0;
+
+    // Pass 1 (consistency): analyse every asset with the preset's metric.
+    std::vector<AudioBuffer> ins(files.size());
+    std::vector<double> metrics(files.size(), -INFINITY);
+    const LoudnessMode mode = base.loudnessMode.value_or(P->loudnessMode);
+    for (size_t i = 0; i < files.size(); ++i)
+    {
+        if (!af::loadAudio(files[i], ins[i], err)) { std::fprintf(stderr, "%s\n", err.c_str()); continue; }
+        if (consistency) metrics[i] = loudnessMetric(ins[i], mode);
+    }
+    std::vector<double> targets(files.size(), base.targetLufs.value_or(P->targetLufs));
+    if (consistency)
+        targets = batchConsistencyTargets(metrics, base.targetLufs.value_or(P->targetLufs), preserve);
+    for (size_t i = 0; i < files.size(); ++i)
+    {
+        if (ins[i].empty()) continue;
+        ProcessRequest rq;
+        rq.input = &ins[i];
+        rq.preset = P;
+        rq.category = P->category;
+        rq.controls = base;
+        if (consistency) rq.controls.targetLufs = targets[i];
+        ProcessResult r = process(rq, {});
+        std::string name = files[i];
+        const auto slash = name.find_last_of("/\\");
+        if (slash != std::string::npos) name = name.substr(slash + 1);
+        const auto dot = name.find_last_of('.');
+        name = name.substr(0, dot) + (ex.format == af::FileFormat::Flac ? ".flac" : ".wav");
+        const std::string out = outdir + "/" + name;
+        if (!af::saveAudio(out, r.output, ex, err)) std::fprintf(stderr, "%s\n", err.c_str());
+        std::printf("%-40s in %7.2f -> target %7.2f -> out %7.2f (%s), TP %.2f\n", name.c_str(), metrics[i], targets[i],
+                    r.outputLoudnessValue, loudnessModeName(mode), r.outputStats.truePeakDb);
+    }
+    return 0;
+}
+
+} // namespace
+
+int main(int argc, char** argv)
+{
+    if (argc < 2) { usage(); return 2; }
+    const std::string cmd = argv[1];
+    const Args a = parse(argc, argv);
+    try
+    {
+        if (cmd == "presets")
+        {
+            for (auto& p : allPresets())
+                std::printf("%-20s %-14s %-26s %s %.1f, ceiling %.1f dBTP\n", p.id.c_str(), categoryName(p.category), p.name.c_str(),
+                            loudnessModeName(p.loudnessMode), p.targetLufs, p.ceilingDbTP);
+            return 0;
+        }
+        if (cmd == "analyze")
+        {
+            if (a.pos.empty()) { usage(); return 2; }
+            AudioBuffer in;
+            std::string err;
+            af::SourceInfo si;
+            if (!af::loadAudio(a.pos[0], in, err, &si)) { std::fprintf(stderr, "%s\n", err.c_str()); return 1; }
+            std::printf("%s (%s, %d bit%s)\n", a.pos[0].c_str(), si.formatName.c_str(), si.bitsPerSample, si.floatingPoint ? " float" : "");
+            std::printf("%s", describe(analyze(in, parseCategory(a.get("category", "voice")))).c_str());
+            return 0;
+        }
+        if (cmd == "process") return runProcess(a);
+        if (cmd == "batch") return runBatch(a);
+    }
+    catch (const std::exception& e)
+    {
+        std::fprintf(stderr, "error: %s\n", e.what());
+        return 1;
+    }
+    usage();
+    return 2;
+}
