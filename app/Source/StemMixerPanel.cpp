@@ -47,10 +47,10 @@ public:
     void resized() override
     {
         auto r = getLocalBounds().reduced(4, 3);
-        name_.setBounds(r.removeFromLeft(240));
-        role_.setBounds(r.removeFromLeft(130).reduced(2, 0));
-        gain_.setBounds(r.removeFromLeft(190).reduced(2, 0));
-        pan_.setBounds(r.removeFromLeft(150).reduced(2, 0));
+        name_.setBounds(r.removeFromLeft(190));
+        role_.setBounds(r.removeFromLeft(124).reduced(2, 0));
+        gain_.setBounds(r.removeFromLeft(150).reduced(2, 0));
+        pan_.setBounds(r.removeFromLeft(120).reduced(2, 0));
         bus_.setBounds(r.removeFromLeft(120).reduced(2, 0));
         mute_.setBounds(r.removeFromLeft(64));
         proc_.setBounds(r.removeFromLeft(90));
@@ -180,6 +180,6 @@ void StemMixerPanel::resized()
     info_.setBounds(r.removeFromTop(34));
     viewport_.setBounds(r);
     const int rowH = 30;
-    rowHolder_.setBounds(0, 0, std::max(1000, r.getWidth() - 12), std::max(rowH, int(rows_.size()) * rowH));
+    rowHolder_.setBounds(0, 0, std::max(860, r.getWidth() - 12), std::max(rowH, int(rows_.size()) * rowH));
     for (int i = 0; i < rows_.size(); ++i) rows_[i]->setBounds(0, i * rowH, rowHolder_.getWidth(), rowH);
 }

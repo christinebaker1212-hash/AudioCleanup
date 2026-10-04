@@ -86,7 +86,8 @@ private:
     std::shared_ptr<SessionItem> stemItem_;
     struct Script
     {
-        bool active = false, process = false, quit = false, processPosted = false;
+        bool active = false, process = false, quit = false, processPosted = false, mix = false;
+        int stemsExpected = 0;
         juce::String preset, ab;
         juce::File screenshot;
         int ticks = 0, settle = 0;

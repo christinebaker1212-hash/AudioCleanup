@@ -76,9 +76,13 @@ add_library(af_rnnoise STATIC
 target_include_directories(af_rnnoise SYSTEM PUBLIC ${rnnoise_SOURCE_DIR}/include)
 target_include_directories(af_rnnoise PRIVATE ${RNN_SRC})
 target_compile_definitions(af_rnnoise PRIVATE RNNOISE_BUILD)
+set_target_properties(af_rnnoise PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON)
 if(MSVC)
   target_compile_options(af_rnnoise PRIVATE /W0)
-  target_compile_definitions(af_rnnoise PRIVATE _USE_MATH_DEFINES _CRT_SECURE_NO_WARNINGS)
+  # MSVC never defines __SSE2__, but SSE2 is baseline on x64. Without it
+  # RNNoise selects its generic path, whose os_support.h is missing from the
+  # 0.2 release tarball. This is the same SSE path GCC/Clang use on x64.
+  target_compile_definitions(af_rnnoise PRIVATE _USE_MATH_DEFINES _CRT_SECURE_NO_WARNINGS __SSE2__=1)
 else()
   target_compile_options(af_rnnoise PRIVATE -w)
   target_link_libraries(af_rnnoise PRIVATE m)

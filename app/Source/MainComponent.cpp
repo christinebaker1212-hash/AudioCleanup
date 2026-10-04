@@ -495,6 +495,15 @@ void MainComponent::runStemMix()
     const ac::PresetDef master = *stemPanel_.masterPreset();
     rq.masterControls = controls_.controls();
     rq.masterControls.noiseRegion.reset();
+    if (controls_.category() != ac::Category::Music)
+    {
+        // The right-hand Output controls belong to a non-music preset: deliver
+        // with the master preset's own loudness target and ceiling instead.
+        rq.masterControls.loudnessMode.reset();
+        rq.masterControls.targetLufs.reset();
+        rq.masterControls.ceilingDbTP.reset();
+        rq.masterControls.overrides.clear();
+    }
     // Keep the stem buffers alive for the task.
     std::vector<std::shared_ptr<const ac::AudioBuffer>> keep;
     for (auto& s : stems) keep.push_back(s.audio);
@@ -587,6 +596,12 @@ void MainComponent::updateMeters()
     const auto uc = controls_.controls();
     v.target = float(uc.targetLufs.value_or(p ? p->targetLufs : -16.0));
     v.ceiling = float(uc.ceilingDbTP.value_or(p ? p->ceilingDbTP : -1.0));
+    if (current_ && current_->result)
+    {
+        // Markers show what this render was actually delivered against.
+        v.target = float(current_->result->plan.targetLufs);
+        v.ceiling = float(current_->result->plan.ceilingDbTP);
+    }
     const bool proc = player_.source() != ABPlayer::Original && current_ && current_->result;
     v.label = proc ? "Meters: processed" : "Meters: original (file level)";
     if (current_ && current_->display)
@@ -633,18 +648,35 @@ void MainComponent::handleCommandLine(const juce::StringArray& args)
         else if (a == "--ab" && i + 1 < args.size()) script_.ab = args[++i];
         else if (a == "--screenshot" && i + 1 < args.size()) script_.screenshot = juce::File::getCurrentWorkingDirectory().getChildFile(args[++i]);
         else if (a == "--quit") script_.quit = true;
+        else if (a == "--stem" && i + 1 < args.size())
+        {
+            juce::Array<juce::File> st;
+            st.add(juce::File::getCurrentWorkingDirectory().getChildFile(args[++i]));
+            addFiles(st, true);
+            ++script_.stemsExpected;
+            tabs_.setCurrentTabIndex(3);
+        }
+        else if (a == "--mix") script_.mix = true;
         else if (!a.startsWith("--") && juce::File::getCurrentWorkingDirectory().getChildFile(a).existsAsFile())
             files.add(juce::File::getCurrentWorkingDirectory().getChildFile(a));
     }
     if (script_.preset.isNotEmpty()) controls_.selectPreset(script_.preset.toStdString());
     if (!files.isEmpty()) addFiles(files, false);
-    script_.active = script_.process || script_.screenshot != juce::File() || script_.quit;
+    script_.active = script_.process || script_.mix || script_.screenshot != juce::File() || script_.quit;
 }
 
 void MainComponent::runScript()
 {
     if (!script_.active) return;
     ++script_.ticks;
+    if (script_.mix && !script_.processPosted && int(stemPanel_.stems().size()) >= script_.stemsExpected && !worker_.busy())
+    {
+        script_.processPosted = true;
+        script_.process = true; // wait for the mix result
+        runStemMix();
+        return;
+    }
+    if (script_.mix && !script_.processPosted) return;
     if (script_.process && !script_.processPosted && current_ && !worker_.busy())
     {
         script_.processPosted = true;

@@ -26,6 +26,7 @@ void usage()
         "  analyze <in> [--category voice|sfx|music]\n"
         "  process <in> <out> --preset <id> [options]\n"
         "  batch <outdir> <in...> --preset <id> [--consistency 0..1] [options]\n"
+        "  compare <candidate> <reference>          measure a result against an approved reference\n"
         "options:\n"
         "  --lufs <v> --ceiling <dBTP> --mode unchanged|peak|integrated|momentary|shortterm\n"
         "  --sr <Hz> --bits 16|24|32 --format wav|flac --dither none|tpdf|shaped\n"
@@ -197,6 +198,104 @@ int runProcess(const Args& a)
     return 0;
 }
 
+/** Objective comparison of a candidate render against an engineer-approved
+    reference: alignment, loudness/dynamics/peak deltas, 1/3-octave balance
+    difference after loudness matching, stereo image and residual level. */
+int runCompare(const Args& a)
+{
+    if (a.pos.size() < 2) { usage(); return 2; }
+    AudioBuffer cand, ref;
+    std::string err;
+    if (!af::loadAudio(a.pos[0], cand, err) || !af::loadAudio(a.pos[1], ref, err)) { std::fprintf(stderr, "%s\n", err.c_str()); return 1; }
+    if (std::abs(cand.sampleRate - ref.sampleRate) > 0.5) cand = resample(cand, ref.sampleRate);
+    // Alignment by cross-correlation of the first channel (+/- 0.5 s).
+    const auto mc = cand.mixdown(), mr = ref.mixdown();
+    const int maxLag = int(0.5 * ref.sampleRate);
+    const size_t n = std::min<size_t>(std::min(mc.size(), mr.size()), size_t(ref.sampleRate * 30));
+    int lag = 0;
+    double best = -1e300;
+    // Coarse-to-fine: FFT-free direct search on a decimated envelope, then exact refine.
+    {
+        best = -1e300;
+        for (int L = -maxLag; L <= maxLag; L += 8)
+        {
+            double sum = 0;
+            for (size_t i = 0; i < n; i += 8)
+            {
+                const long j = long(i) + L;
+                if (j >= 0 && size_t(j) < mc.size()) sum += double(mr[i]) * mc[size_t(j)];
+            }
+            if (sum > best) { best = sum; lag = L; }
+        }
+        const int c0 = lag;
+        best = -1e300;
+        for (int L = c0 - 8; L <= c0 + 8; ++L)
+        {
+            double sum = 0;
+            for (size_t i = 0; i < n; ++i)
+            {
+                const long j = long(i) + L;
+                if (j >= 0 && size_t(j) < mc.size()) sum += double(mr[i]) * mc[size_t(j)];
+            }
+            if (sum > best) { best = sum; lag = L; }
+        }
+    }
+    AudioBuffer aligned(cand.numChannels(), ref.numFrames(), ref.sampleRate);
+    for (int c = 0; c < cand.numChannels(); ++c)
+        for (size_t i = 0; i < ref.numFrames(); ++i)
+        {
+            const long j = long(i) + lag;
+            aligned.channel(c)[i] = j >= 0 && size_t(j) < cand.numFrames() ? cand.channel(c)[size_t(j)] : 0.0f;
+        }
+    const auto lc = measureLoudness(aligned), lr = measureLoudness(ref);
+    std::printf("alignment: candidate offset %+d samples (%.2f ms)\n", lag, 1000.0 * lag / ref.sampleRate);
+    std::printf("%-22s %12s %12s %10s\n", "metric", "candidate", "reference", "delta");
+    auto row = [](const char* k, double c, double r) { std::printf("%-22s %12.2f %12.2f %+10.2f\n", k, c, r, c - r); };
+    row("integrated LUFS", lc.integrated, lr.integrated);
+    row("LRA LU", lc.lra, lr.lra);
+    row("true peak dBTP", lc.truePeakDb, lr.truePeakDb);
+    row("max short-term LUFS", lc.maxShortTerm, lr.maxShortTerm);
+    row("PLR dB", lc.truePeakDb - lc.integrated, lr.truePeakDb - lr.integrated);
+    // Loudness-match, then spectral balance and residual.
+    const double g = lc.integratedValid() && lr.integratedValid() ? dbToGain(lr.integrated - lc.integrated) : 1.0;
+    aligned.applyGain(g);
+    const auto sc = longTermSpectrum(aligned), sr = longTermSpectrum(ref);
+    std::printf("\n1/3-octave balance after loudness matching (candidate - reference, dB):\n");
+    double worst = 0, sumSq = 0;
+    int cnt = 0;
+    for (size_t i = 0; i < std::min(sc.bandHz.size(), sr.bandHz.size()); ++i)
+    {
+        if (sr.bandAbsDb[i] < -120) continue;
+        const double d = sc.bandAbsDb[i] - sr.bandAbsDb[i];
+        std::printf("  %7.0f Hz %+6.2f%s", sc.bandHz[i], d, (cnt % 4 == 3) ? "\n" : "");
+        worst = std::max(worst, std::abs(d));
+        sumSq += d * d;
+        ++cnt;
+    }
+    std::printf("\n  rms deviation %.2f dB, worst band %.2f dB\n", std::sqrt(sumSq / std::max(1, cnt)), worst);
+    if (ref.numChannels() == 2 && aligned.numChannels() == 2)
+    {
+        auto corr = [](const AudioBuffer& b) {
+            double ll = 0, rr = 0, lr2 = 0;
+            for (size_t i = 0; i < b.numFrames(); ++i) { ll += double(b.channel(0)[i]) * b.channel(0)[i]; rr += double(b.channel(1)[i]) * b.channel(1)[i]; lr2 += double(b.channel(0)[i]) * b.channel(1)[i]; }
+            return ll > 0 && rr > 0 ? lr2 / std::sqrt(ll * rr) : 1.0;
+        };
+        row("stereo correlation", corr(aligned), corr(ref));
+    }
+    AudioBuffer diff = aligned;
+    double e = 0, er = 0;
+    for (int c = 0; c < std::min(diff.numChannels(), ref.numChannels()); ++c)
+        for (size_t i = 0; i < ref.numFrames(); ++i)
+        {
+            const double d = double(diff.channel(c)[i]) - ref.channel(c)[i];
+            e += d * d;
+            er += double(ref.channel(c)[i]) * ref.channel(c)[i];
+        }
+    std::printf("residual after alignment + loudness match: %.1f dB re reference (lower = closer; < -30 dB is near-identical)\n",
+                powerToDb(e / std::max(er, 1e-30), -300));
+    return 0;
+}
+
 int runBatch(const Args& a)
 {
     if (a.pos.size() < 2) { usage(); return 2; }
@@ -276,6 +375,7 @@ int main(int argc, char** argv)
         }
         if (cmd == "process") return runProcess(a);
         if (cmd == "batch") return runBatch(a);
+        if (cmd == "compare") return runCompare(a);
     }
     catch (const std::exception& e)
     {
