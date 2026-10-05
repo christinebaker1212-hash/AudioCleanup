@@ -138,6 +138,14 @@ MainComponent::MainComponent()
     controls_.onControlsChanged = [this] { scheduleAutoRender(); };
     controls_.onCategoryChanged = [this] { scheduleAutoRender(); };
     controls_.onAudioSettings = [this] { showAudioSettings(); };
+    controls_.onLoadReference = [this] {
+        chooser_ = std::make_unique<juce::FileChooser>("Reference track to match", juce::File(), af::supportedWildcard());
+        chooser_->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                              [this](const juce::FileChooser& fc) {
+                                  const auto f = fc.getResult();
+                                  if (f.existsAsFile()) loadReference(f);
+                              });
+    };
 
     hint_.setFont(theme::font(12));
     hint_.setColour(juce::Label::textColourId, theme::dim);
@@ -327,6 +335,28 @@ void MainComponent::addFiles(const juce::Array<juce::File>& files, bool asStems)
             });
         });
     }
+}
+
+void MainComponent::loadReference(const juce::File& f)
+{
+    worker_.post("Analysing reference " + f.getFileName(), [this, f](const ac::Job&) {
+        ac::AudioBuffer buf;
+        std::string err;
+        if (!af::loadAudio(f.getFullPathName().toStdString(), buf, err))
+        {
+            onMessageThread([err] { juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, "Reference", err); });
+            return;
+        }
+        auto prof = std::make_shared<const ac::ReferenceProfile>(ac::analyzeReference(buf, f.getFileName().toStdString()));
+        onMessageThread([this, prof] {
+            controls_.setReference(prof);
+            resized();
+            scheduleAutoRender();
+            hint_.setText("Reference loaded: tonal balance, loudness, width and loudness range will be matched (bounded). "
+                          "Press PROCESS if auto re-render is off.",
+                          juce::dontSendNotification);
+        });
+    });
 }
 
 void MainComponent::selectItem(std::shared_ptr<SessionItem> item)
@@ -705,6 +735,7 @@ void MainComponent::handleCommandLine(const juce::StringArray& args)
             tabs_.setCurrentTabIndex(3);
         }
         else if (a == "--mix") script_.mix = true;
+        else if (a == "--match" && i + 1 < args.size()) loadReference(juce::File::getCurrentWorkingDirectory().getChildFile(args[++i]));
         else if (a == "--tab" && i + 1 < args.size()) tabs_.setCurrentTabIndex(args[++i].getIntValue());
         else if (a == "--scale" && i + 1 < args.size()) ++i; // applied at startup (Main.cpp)
         else if (a == "--window" && i + 1 < args.size())

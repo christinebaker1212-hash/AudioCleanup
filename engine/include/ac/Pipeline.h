@@ -45,6 +45,11 @@ struct UserControls
     std::map<StageId, Override> overrides;
     /** Optional user-selected noise-only region (samples) for the noise profile. */
     std::optional<std::pair<size_t, size_t>> noiseRegion;
+    /** Optional reference track: tonal balance, loudness, width and loudness
+        range are matched toward it (bounded), instead of the generic target. */
+    std::shared_ptr<const ReferenceProfile> reference;
+    double referenceAmount = 0.8;          ///< 0..1 how far to move toward the reference
+    bool matchReferenceLoudness = true;    ///< deliver at the reference's integrated loudness
 };
 
 struct StagePlan
@@ -135,6 +140,9 @@ ProcessResult process(const ProcessRequest& req, const Job& job = {});
 
 /** Value of the given loudness metric (LUFS or dBTP for Peak). Returns -inf if undefined. */
 double loudnessMetric(const AudioBuffer& b, LoudnessMode m, LoudnessStats* statsOut = nullptr);
+
+/** RMS 1/3-octave balance deviation (dB, level-neutral, 100 Hz-12 kHz) of a buffer from a reference. */
+void referenceDeviationRms(const AudioBuffer& b, const ReferenceProfile& ref, double& rmsOut);
 
 /** Multi-line text dump of a plan (CLI / logs). */
 std::string describePlan(const Plan& p);

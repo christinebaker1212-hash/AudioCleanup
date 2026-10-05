@@ -32,6 +32,10 @@ public:
     std::function<void()> onProcess, onCancel, onExport, onProcessAll, onExportAll, onControlsChanged, onCategoryChanged,
         onAudioSettings;
     std::function<void(double)> onUiScale;
+    std::function<void()> onLoadReference;
+
+    /** Reference track for matching (nullptr = generic preset targets). */
+    void setReference(std::shared_ptr<const ac::ReferenceProfile> r);
 
     /** Height the content needs at the current width (the panel scrolls when taller than the view). */
     int contentHeight() const { return contentHeight_; }
@@ -72,6 +76,11 @@ private:
     juce::ComboBox format_, bits_, dither_;
     juce::TextButton export_{ "Export..." }, processAll_{ "Process all" }, exportAll_{ "Export all..." }, audio_{ "Audio device..." };
     juce::ToggleButton consistency_{ "Batch consistency" };
+    std::shared_ptr<const ac::ReferenceProfile> reference_;
+    juce::TextButton refLoad_{ "Match a reference..." }, refClear_{ "Clear" };
+    juce::Label refName_, refAmountL_;
+    juce::Slider refAmount_;
+    juce::ToggleButton refLoudness_{ "Match its loudness" };
     juce::Label uiSizeL_;
     juce::ComboBox uiSize_;
     int contentHeight_ = 800;

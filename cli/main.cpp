@@ -38,6 +38,7 @@ void usage()
         "                        compressor multiband saturation stereo limiter)\n"
         "  --no-cleanup --no-tone --no-dynamics --no-output\n"
         "  --noise-region <startSec>:<endSec>\n"
+        "  --match <file> [--match-amount 0..1] [--no-match-loudness]  match a reference track\n"
         "  --removed <file>  --reference <file> (loudness-matched original)  --plan (print plan)\n"
         "  --user-preset <json>  load a user preset file instead of --preset");
 }
@@ -163,6 +164,16 @@ int runProcess(const Args& a)
     rq.category = P->category;
     af::ExportOptions ex;
     if (!controlsFromArgs(a, rq.controls, ex, err)) { std::fprintf(stderr, "%s\n", err.c_str()); return 2; }
+    if (a.has("match"))
+    {
+        AudioBuffer refAudio;
+        if (!af::loadAudio(a.get("match"), refAudio, err)) { std::fprintf(stderr, "%s\n", err.c_str()); return 1; }
+        std::string nm = a.get("match");
+        if (auto sl = nm.find_last_of("/\\"); sl != std::string::npos) nm = nm.substr(sl + 1);
+        rq.controls.reference = std::make_shared<ReferenceProfile>(analyzeReference(refAudio, nm));
+        if (a.has("match-amount")) rq.controls.referenceAmount = std::stod(a.get("match-amount"));
+        rq.controls.matchReferenceLoudness = !a.has("no-match-loudness");
+    }
     if (a.has("noise-region"))
     {
         const auto r = a.get("noise-region");

@@ -58,7 +58,7 @@ double eqResponseAt(const std::vector<EqBand>& bands, double f, double sr) { ret
 
 /** Fit a small set of broad EQ bands to a deviation curve (dB per 1/3-oct band). */
 std::vector<EqBand> fitEq(const std::vector<double>& hz, std::vector<double> dev, double maxBoost, double maxCut,
-                          double sr, Category cat, double minBellHz, double maxHighBoost, double maxLowCut)
+                          double sr, Category cat, double minBellHz, double maxHighBoost, double maxLowCut, int maxBells = 3)
 {
     // Intent guards applied to the target before fitting...
     for (size_t i = 0; i < hz.size(); ++i)
@@ -85,7 +85,7 @@ std::vector<EqBand> fitEq(const std::vector<double>& hz, std::vector<double> dev
         if (std::abs(hs) >= 0.5) bands.push_back({ SvfType::HighShelf, hsF, 0.6, hs, true });
     }
     std::vector<bool> used(n, false);
-    for (int it = 0; it < 3; ++it)
+    for (int it = 0; it < maxBells; ++it)
     {
         size_t best = n;
         double bestAbs = 1.0;
@@ -213,6 +213,47 @@ double compressorThreshold(const AudioBuffer& x, const CompressorSettings& c, do
     const auto st = rmsLevelStats(x, winMs, gateDb, c.sidechainHpfHz);
     if (p95Out) *p95Out = st.p95;
     return thresholdFor(st.p95, std::max(0.1, targetGr), c);
+}
+
+std::vector<EqBand> fitEqBands(const std::vector<double>& hz, const std::vector<double>& dev, double maxBoost, double maxCut, double sr,
+                               Category cat, double minBellHz, int maxBells)
+{
+    return fitEq(hz, dev, maxBoost, maxCut, sr, cat, minBellHz, 99.0, 99.0, maxBells);
+}
+
+std::vector<double> referenceDeviation(const SpectrumInfo& src, const SpectrumInfo& ref, double* rmsOut)
+{
+    const size_t n = src.bandHz.size();
+    std::vector<double> dev(n, 0.0);
+    std::vector<bool> have(n, false);
+    for (size_t i = 0; i < n; ++i)
+        for (size_t j = 0; j < ref.bandHz.size(); ++j)
+            if (std::abs(ref.bandHz[j] / src.bandHz[i] - 1.0) < 0.02 && ref.bandAbsDb[j] > -150 && src.bandAbsDb[i] > -150)
+            {
+                dev[i] = ref.bandDb[j] - src.bandDb[i];
+                have[i] = true;
+            }
+    double m = 0;
+    int c = 0;
+    for (size_t i = 0; i < n; ++i)
+        if (have[i] && src.bandHz[i] >= 200 && src.bandHz[i] <= 4000) { m += dev[i]; ++c; }
+    m = c ? m / c : 0;
+    for (size_t i = 0; i < n; ++i) dev[i] = have[i] ? dev[i] - m : 0.0;
+    std::vector<double> sm(n);
+    for (size_t i = 0; i < n; ++i)
+    {
+        const double l = i ? dev[i - 1] : dev[i], r = i + 1 < n ? dev[i + 1] : dev[i];
+        sm[i] = 0.25 * l + 0.5 * dev[i] + 0.25 * r;
+    }
+    if (rmsOut)
+    {
+        double ss = 0;
+        int k = 0;
+        for (size_t i = 0; i < n; ++i)
+            if (have[i] && src.bandHz[i] >= 100 && src.bandHz[i] <= 12000) { ss += dev[i] * dev[i]; ++k; }
+        *rmsOut = k ? std::sqrt(ss / k) : 0.0;
+    }
+    return sm;
 }
 
 void initPlan(Plan& plan)
@@ -485,7 +526,33 @@ void planCleanupTone(Plan& plan, const AnalysisReport& a, const PresetDef& p, co
         // re-shaped, and resonance search starts above the second harmonic.
         const double identityHz = voice ? std::max(150.0, 1.6 * a.speech.f0MedianHz) : 0.0;
         const double resonanceMinHz = voice ? std::max(300.0, 2.2 * a.speech.f0MedianHz) : 120.0;
-        if (p.useTargetCurve && !si.bandHz.empty() && p.toneStrength * tn > 0)
+        if (uc.reference && !si.bandHz.empty() && tn > 0)
+        {
+            // Reference matching: the approved track defines the target.
+            double rmsBefore = 0;
+            auto dev = referenceDeviation(si, uc.reference->spectrum, &rmsBefore);
+            double peakBand = -300;
+            for (double v : si.bandAbsDb) peakBand = std::max(peakBand, v);
+            const double strength = clampv(uc.referenceAmount, 0.0, 1.0) * std::min(tn, 1.5);
+            int protectedBands = 0;
+            for (size_t i = 0; i < dev.size(); ++i)
+            {
+                const bool nearNoise = si.noiseBandDb[i] > -199 && si.bandAbsDb[i] - si.noiseBandDb[i] < 12.0;
+                const bool absent = si.bandAbsDb[i] < peakBand - 60.0;
+                if ((nearNoise || absent) && dev[i] > 0) { dev[i] = 0; ++protectedBands; }
+                if (voice && si.bandHz[i] < identityHz) dev[i] = 0.0;
+                dev[i] *= strength;
+            }
+            const double maxB = std::min(6.0, std::max(p.maxEqBoostDb, 3.0) * 1.5);
+            const double maxC = std::min(6.0, std::max(p.maxEqCutDb, 3.0) * 1.5);
+            bands = fitEq(si.bandHz, dev, maxB, maxC, sr, cat, voice ? identityHz : 60.0, 99.0, 99.0, 5);
+            why.push_back(fmt("matching reference '%s': spectral deviation %.2f dB rms, %.0f%% of it corrected", uc.reference->name.c_str(),
+                              rmsBefore, strength * 100));
+            if (voice) why.push_back(fmt("fundamental region below %.0f Hz left untouched (vocal identity)", identityHz));
+            if (protectedBands) why.push_back(fmt("%d bands not boosted (near noise floor or no content)", protectedBands));
+            param(sp, "Target", "reference track (bounds +" + fmt("%.1f/-%.1f dB", maxB, maxC) + ")");
+        }
+        else if (p.useTargetCurve && !si.bandHz.empty() && p.toneStrength * tn > 0)
         {
             std::vector<double> dev(si.bandHz.size(), 0.0);
             double peakBand = -300;
@@ -646,6 +713,17 @@ void planCleanupTone(Plan& plan, const AnalysisReport& a, const PresetDef& p, co
             s.monoBelowHz = 100.0;
             on = true;
             why = fmt("Low-frequency correlation %.2f (phase-unstable bass) -> side removed below 100 Hz only.", a.stereo.lowCorrelation);
+        }
+        if (sp.available && uc.reference && uc.reference->stereo && !a.stereo.dualMono && !voice)
+        {
+            const double diff = uc.reference->sideToMidDb - a.stereo.sideToMidDb;
+            if (std::abs(diff) > 1.0)
+            {
+                s.width = clampv(dbToGain(diff * clampv(uc.referenceAmount, 0.0, 1.0)), 0.75, 1.35);
+                on = true;
+                why = fmt("Reference side/mid %.1f dB vs source %.1f dB -> width %.2f (bounded 0.75-1.35).", uc.reference->sideToMidDb,
+                          a.stereo.sideToMidDb, s.width);
+            }
         }
         if (sp.available && voice && std::abs(a.stereo.balanceDb) > 2.0 && a.stereo.correlation > 0.7)
         {

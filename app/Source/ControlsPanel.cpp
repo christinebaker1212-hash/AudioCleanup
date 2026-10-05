@@ -150,6 +150,26 @@ ControlsPanel::ControlsPanel()
     preserve_.setTooltip("Fraction of each asset's loudness difference from the group median that is kept (intended differences).");
     addAndMakeVisible(preserve_);
 
+    // Reference matching
+    addAndMakeVisible(refLoad_);
+    addAndMakeVisible(refClear_);
+    refLoad_.setTooltip("Load a professionally finished track whose sound you want: tonal balance, loudness, width and "
+                        "loudness range are matched toward it (within the preset's safety bounds).");
+    refLoad_.onClick = [this] { if (onLoadReference) onLoadReference(); };
+    refClear_.onClick = [this] { setReference(nullptr); changed(); };
+    refName_.setFont(theme::font(11));
+    refName_.setColour(juce::Label::textColourId, theme::dim);
+    addAndMakeVisible(refName_);
+    refAmountL_.setText("Match amount", juce::dontSendNotification);
+    refAmountL_.setFont(theme::font(12));
+    refAmountL_.setColour(juce::Label::textColourId, theme::dim);
+    addAndMakeVisible(refAmountL_);
+    addSlider(refAmount_, 0, 100, 1, 80, "%");
+    refLoudness_.setToggleState(true, juce::dontSendNotification);
+    refLoudness_.onClick = [this] { changed(); };
+    addAndMakeVisible(refLoudness_);
+    setReference(nullptr);
+
     uiSizeL_.setText("Interface size", juce::dontSendNotification);
     uiSizeL_.setFont(theme::font(12));
     uiSizeL_.setColour(juce::Label::textColourId, theme::dim);
@@ -217,6 +237,21 @@ void ControlsPanel::rebuildPresetList()
     presetBox_.setSelectedItemIndex(0, juce::dontSendNotification);
     loading_ = false;
     presetChanged();
+}
+
+void ControlsPanel::setReference(std::shared_ptr<const ac::ReferenceProfile> r)
+{
+    reference_ = std::move(r);
+    const bool on = reference_ != nullptr;
+    refClear_.setEnabled(on);
+    refAmount_.setEnabled(on);
+    refLoudness_.setEnabled(on);
+    if (on)
+        refName_.setText(juce::String(reference_->name) + ":  " + juce::String(reference_->loudness.integrated, 1) + " LUFS, LRA " +
+                             juce::String(reference_->loudness.lra, 1) + " LU, TP " + juce::String(reference_->loudness.truePeakDb, 1) + " dBTP",
+                         juce::dontSendNotification);
+    else refName_.setText("No reference: the preset's generic target is used.", juce::dontSendNotification);
+    resized();
 }
 
 bool ControlsPanel::selectPreset(const std::string& id)
@@ -303,6 +338,9 @@ ac::UserControls ControlsPanel::controls() const
     for (auto& [id, o] : overrides_)
         if (o != ac::Override::Auto) c.overrides[id] = o;
     c.noiseRegion = noiseRegion_;
+    c.reference = reference_;
+    c.referenceAmount = refAmount_.getValue() / 100.0;
+    c.matchReferenceLoudness = refLoudness_.getToggleState();
     return c;
 }
 
@@ -349,6 +387,23 @@ void ControlsPanel::resized()
         presetBox_.setBounds(c);
     }
     presetDesc_.setBounds(row(46));
+    {
+        auto c = row(24);
+        refClear_.setBounds(c.removeFromRight(56));
+        c.removeFromRight(4);
+        refLoad_.setBounds(c);
+    }
+    refName_.setBounds(row(16));
+    if (reference_)
+    {
+        auto c = row(22);
+        refAmountL_.setBounds(c.removeFromLeft(110));
+        refAmount_.setBounds(c);
+        refLoudness_.setBounds(row(20));
+    }
+    refAmountL_.setVisible(reference_ != nullptr);
+    refAmount_.setVisible(reference_ != nullptr);
+    refLoudness_.setVisible(reference_ != nullptr);
     {
         auto c = row(40);
         cancel_.setBounds(c.removeFromRight(70));

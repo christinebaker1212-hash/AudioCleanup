@@ -126,6 +126,22 @@ struct LevelStats
 };
 LevelStats rmsLevelStats(const AudioBuffer& b, double windowMs, double gateDb, double hpfHz = 0.0);
 
+/** What reference matching needs from an approved / professional track. */
+struct ReferenceProfile
+{
+    std::string name;
+    double sampleRate = 48000;
+    SpectrumInfo spectrum;   ///< active-frame 1/3-octave LTAS (normalised as in SpectrumInfo)
+    LoudnessStats loudness;
+    double plrDb = 0.0;      ///< true peak - integrated loudness
+    bool stereo = false;
+    double sideToMidDb = -100.0;
+    double correlation = 1.0;
+};
+
+/** Analyse a reference track for matching (tonal balance, loudness, dynamics, width). */
+ReferenceProfile analyzeReference(const AudioBuffer& b, const std::string& name = {});
+
 /** Long-term average spectrum (active frames) of any buffer. */
 SpectrumInfo longTermSpectrum(const AudioBuffer& b);
 

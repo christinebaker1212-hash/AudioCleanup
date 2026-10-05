@@ -277,3 +277,43 @@ TEST("formats: MP3 import (bundled decoder) and Ogg Vorbis round trip")
     CHECK(ts::bestLag(src.vec(0), back.vec(0), 2000) == 0);
     dir.deleteRecursively();
 }
+
+TEST("reference matching: tonal balance, loudness and width move to the reference (bounded)")
+{
+    // Reference = "professional" master; mix = same material darker, narrower, 9 dB quieter.
+    AudioBuffer ref = ts::pseudoMusic(SR, 12.0, 123, -16);
+    {
+        // A real master peaks at or below its ceiling.
+        LimiterSettings ls;
+        ls.ceilingDbTP = -1.0;
+        ls.inputGainDb = 3.0;
+        TruePeakLimiter lim(ls);
+        ref = ts::render(lim, ref);
+    }
+    AudioBuffer mix = ref;
+    for (int c = 0; c < 2; ++c)
+    {
+        Biquad lp(BiquadCoeffs::lowpass(2500, 0.707, SR));
+        for (auto& v : mix.vec(c)) v = float(0.55 * v + 0.45 * lp.process(v));
+    }
+    for (size_t i = 0; i < mix.numFrames(); ++i)
+    {
+        const double m = 0.5 * (mix.channel(0)[i] + mix.channel(1)[i]), s = 0.5 * (mix.channel(0)[i] - mix.channel(1)[i]) * 0.6;
+        mix.channel(0)[i] = float((m + s) * dbToGain(-9));
+        mix.channel(1)[i] = float((m - s) * dbToGain(-9));
+    }
+    auto profile = std::make_shared<ReferenceProfile>(analyzeReference(ref, "ref"));
+    UserControls uc;
+    uc.reference = profile;
+    ProcessResult r = run(mix, "music.transparent", uc);
+    double before = 0, after = 0;
+    referenceDeviationRms(mix, *profile, before);
+    referenceDeviationRms(r.output, *profile, after);
+    const double smBefore = analyzeReference(mix).sideToMidDb, smAfter = analyzeReference(r.output).sideToMidDb;
+    REPORT("tonal deviation %.2f -> %.2f dB rms; loudness %.2f (ref %.2f); side/mid %.1f -> %.1f dB (ref %.1f)", before, after,
+           r.outputStats.integrated, profile->loudness.integrated, smBefore, smAfter, profile->sideToMidDb);
+    CHECK_LE(after, 0.5 * before);
+    CHECK_NEAR(r.outputStats.integrated, profile->loudness.integrated, 0.5);
+    CHECK_GE(smAfter, smBefore + 1.5);
+    CHECK_LE(r.outputStats.truePeakDb, findPreset("music.transparent")->ceilingDbTP + 0.1);
+}

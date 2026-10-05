@@ -82,6 +82,7 @@ the algorithm named here.
 | Loudness-matched, latency-aligned A/B; removed-noise audition | Verified: removed + output = input (< 1e-6) |
 | Background processing, progress, cancel | Verified (cancellation test); GUI uses a worker thread |
 | Reference comparison (`af_cli compare`) and blind listening sets (`tools/make_listening_set.py`) | Implemented |
+| Reference matching (GUI **Match a reference...**, CLI `--match`): 1/3-octave level-neutral balance fit (≤ 5 bells, bounded), closed-loop residual correction after dynamics, loudness target taken from the reference, bounded M/S width match; amount 0–100 % | Verified: synthetic test 2.72 → 1.28 dB rms deviation, loudness within 0.11 LU, width moves toward the reference within bounds; real track 3.39 → 0.88 dB rms (generic preset: 2.87) |
 
 ## Known limits (stated plainly)
 

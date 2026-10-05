@@ -79,6 +79,7 @@ For offline builds, point `FETCHCONTENT_SOURCE_DIR_<NAME>` at local checkouts.
 |---|---|
 | File list (left) | Drag & drop or **Add files...** (WAV, FLAC, AIFF, Ogg Vorbis, MP3). Originals are never modified or overwritten. |
 | Category + preset (right) | 15 presets in three families; user presets (★) are saved with **Save preset...** |
+| Reference matching | **Match a reference...** loads a finished track you like; the render moves toward its tonal balance, loudness and stereo width (bounded, *Amount* 0–100 %, optional *Match its loudness*). |
 | **PROCESS** | Analyses (cached per file and category) and renders on a background thread with progress and **Cancel**. With *Auto re-render* on, changing any control re-renders after a short pause. |
 | Simple controls | **Cleanup** (repair depth), **Tone** (correction strength + tilt), **Dynamics** (amount), **Output** (loudness mode, target, true-peak ceiling, sample rate). Each section can be switched off. |
 | Optional processors | Neural speech enhancer, de-reverb, multiband, saturation (or any stage via the advanced panel: Auto / On / Bypass). |
@@ -102,6 +103,7 @@ af_cli presets
 af_cli analyze in.wav --category voice
 af_cli process in.wav out.wav --preset voice.studio --plan --removed removed.wav --reference matched_original.wav
 af_cli process mix.wav master.flac --preset music.warm --lufs -12 --ceiling -1 --sr 44100 --bits 24 --format flac
+af_cli process mix.wav master.wav --preset music.punchy --match pro_track.flac --match-amount 0.8
 af_cli batch outdir a.wav b.wav c.wav --preset sfx.game --consistency 0.5
 ```
 

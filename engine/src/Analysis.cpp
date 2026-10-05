@@ -449,6 +449,21 @@ double estimateRt60(const std::vector<float>& mono, double sr, double /*noiseDb*
 
 SpectrumInfo longTermSpectrum(const AudioBuffer& b) { return spectrumInfo(b, NoiseProfile{}); }
 
+ReferenceProfile analyzeReference(const AudioBuffer& b, const std::string& name)
+{
+    ReferenceProfile r;
+    r.name = name;
+    r.sampleRate = b.sampleRate;
+    r.spectrum = spectrumInfo(b, NoiseProfile{});
+    r.loudness = measureLoudness(b);
+    r.plrDb = r.loudness.integratedValid() ? r.loudness.truePeakDb - r.loudness.integrated : 0.0;
+    const auto st = stereoInfo(b);
+    r.stereo = st.isStereo && !st.dualMono;
+    r.sideToMidDb = st.sideToMidDb;
+    r.correlation = st.correlation;
+    return r;
+}
+
 std::vector<double> bandLevelPercentiles(const AudioBuffer& b, SvfType detector, double freq, double q, double gateDb)
 {
     const double sr = b.sampleRate;

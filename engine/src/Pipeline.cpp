@@ -212,6 +212,14 @@ ProcessResult process(const ProcessRequest& req, const Job& job)
     plan.targetLufs = uc.targetLufs.value_or(P.targetLufs);
     plan.ceilingDbTP = uc.ceilingDbTP.value_or(P.ceilingDbTP);
     plan.outputSampleRate = uc.outputSampleRate > 0 ? uc.outputSampleRate : input.sampleRate;
+    if (uc.reference && uc.matchReferenceLoudness && uc.reference->loudness.integratedValid())
+    {
+        plan.loudnessMode = LoudnessMode::Integrated;
+        plan.targetLufs = uc.reference->loudness.integrated;
+        plan.log.push_back(fmt("Reference '%s': %.2f LUFS, LRA %.1f LU, PLR %.1f dB, TP %.2f dBTP -> delivery target %.2f LUFS.",
+                               uc.reference->name.c_str(), uc.reference->loudness.integrated, uc.reference->loudness.lra,
+                               uc.reference->plrDb, uc.reference->loudness.truePeakDb, plan.targetLufs));
+    }
     plan.log.push_back("Preset " + P.name + " (" + categoryName(P.category) + "). Source analysis:\n" + describe(A));
 
     if (A.silent || input.empty())
@@ -361,6 +369,42 @@ ProcessResult process(const ProcessRequest& req, const Job& job)
             R.metrics.resize(metricsPreComp);
             runBus();
         }
+    }
+
+    // Closed-loop tone: with a reference, measure what dynamics/saturation did to
+    // the balance and apply a bounded residual correction before delivery.
+    if (uc.reference && plan.stage(StageId::Eq).enabled)
+    {
+        phase(0.81, 0.82, "Reference residual match");
+        const auto si = longTermSpectrum(x);
+        double rms0 = 0;
+        auto dev = referenceDeviation(si, uc.reference->spectrum, &rms0);
+        const double identityHz = P.category == Category::Voice ? std::max(150.0, 1.6 * A.speech.f0MedianHz) : 60.0;
+        const double strength = 0.7 * clampv(uc.referenceAmount, 0.0, 1.0) * std::min(clampv(uc.tone, 0.0, 2.0), 1.5);
+        for (size_t i = 0; i < dev.size(); ++i) dev[i] = si.bandHz[i] < identityHz ? 0.0 : dev[i] * strength;
+        auto bands = fitEqBands(si.bandHz, dev, 2.0, 2.0, x.sampleRate, P.category, identityHz, 4);
+        bool any = false;
+        for (auto& b : bands) any |= std::abs(b.gainDb) >= 0.3;
+        if (any && rms0 > 0.75)
+        {
+            ParametricEq eq(bands);
+            RenderOptions ro;
+            ro.keepTail = false;
+            AudioBuffer y = renderProcessor(eq, x, ro, sub);
+            y.resizeFrames(x.numFrames());
+            double rms1 = 0;
+            referenceDeviation(longTermSpectrum(y), uc.reference->spectrum, &rms1);
+            if (rms1 < rms0)
+            {
+                x = std::move(y);
+                std::string list;
+                for (auto& b : bands) list += fmt("%.0f Hz %+.1f; ", b.freq, b.gainDb);
+                plan.stage(StageId::Eq).params.emplace_back("Residual match (after dynamics)", list);
+                plan.log.push_back(fmt("Reference residual match: deviation %.2f -> %.2f dB rms after dynamics.", rms0, rms1));
+            }
+            else plan.log.push_back(fmt("Reference residual match skipped (would not improve: %.2f -> %.2f dB rms).", rms0, rms1));
+        }
+        else plan.log.push_back(fmt("Reference residual deviation %.2f dB rms after dynamics: no correction needed.", rms0));
     }
 
     // ---------------------------------------------------- Resample + Output
@@ -565,6 +609,11 @@ ProcessResult process(const ProcessRequest& req, const Job& job)
                            R.outputStats.lra, R.outputStats.truePeakDb, R.matchGainDb));
     job.report(1.0, "Done");
     return R;
+}
+
+void referenceDeviationRms(const AudioBuffer& b, const ReferenceProfile& ref, double& rmsOut)
+{
+    referenceDeviation(longTermSpectrum(b), ref.spectrum, &rmsOut);
 }
 
 std::string describePlan(const Plan& p)

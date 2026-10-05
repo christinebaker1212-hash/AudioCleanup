@@ -49,6 +49,7 @@ private:
     void exportSelected();
     void processAll(bool exportToo, juce::File folder);
     void runStemMix();
+    void loadReference(const juce::File& f);
     void ensurePlayback(std::shared_ptr<SessionItem> item);
     void refreshDetails();
     void updateMeters();
