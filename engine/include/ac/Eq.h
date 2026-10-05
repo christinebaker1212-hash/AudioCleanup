@@ -131,9 +131,11 @@ struct StereoSettings
     double width = 1.0;          ///< side gain (1 = unchanged)
     double monoBelowHz = 0.0;    ///< 0 = off; collapse side below this (LR4)
     double balanceDb = 0.0;      ///< + = raise right / lower left (split evenly)
+    std::vector<EqBand> sideEq;  ///< EQ applied to the side (S) signal only (width by frequency)
+    double sideLowCutHz = 0.0;   ///< 0 = off; 12 dB/oct high-pass on the side signal (tighter low end)
 };
 
-/** M/S width, bass mono-isation and balance correction (stereo only). */
+/** M/S width, bass mono-isation, side EQ (width by frequency), side low-cut and balance correction (stereo only). */
 class StereoProcessor : public Processor
 {
 public:
@@ -146,6 +148,8 @@ private:
     double sr_ = 48000;
     LR4Crossover x_;
     Biquad apMid_;
+    std::vector<Svf> sf_;
+    Svf sideHp_;
 };
 
 } // namespace ac

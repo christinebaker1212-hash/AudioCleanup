@@ -431,3 +431,71 @@ TEST("tempo sync: compressor and limiter releases land on the note grid of the d
     CHECK_NEAR(off.plan.settings.compressor.releaseMs, findPreset("music.warm")->compStyle.releaseMs, 1e-9);
     CHECK_LE(r.outputStats.truePeakDb, findPreset("music.warm")->ceilingDbTP + 0.1);
 }
+
+TEST("mid/side: width by frequency moves to the reference; side low-cut leaves the mid untouched")
+{
+    // Source: wide lows, narrow highs. Reference: the opposite (typical master).
+    auto shape = [](const AudioBuffer& in, double loW, double hiW) {
+        AudioBuffer o = in;
+        Biquad lpS(BiquadCoeffs::lowpass(800, 0.707, SR)); // complementary split: hi = s - lo (no crossover notch)
+        for (size_t i = 0; i < o.numFrames(); ++i)
+        {
+            const double m = 0.5 * (in.channel(0)[i] + in.channel(1)[i]), s = 0.5 * (in.channel(0)[i] - in.channel(1)[i]);
+            const double lo = lpS.process(s);
+            const double s2 = loW * lo + hiW * (s - lo);
+            o.channel(0)[i] = float(m + s2);
+            o.channel(1)[i] = float(m - s2);
+        }
+        return o;
+    };
+    const AudioBuffer base = ts::pseudoMusic(SR, 12.0, 909, -18);
+    AudioBuffer ref = shape(base, 0.7, 1.3), src = shape(base, 1.3, 0.75);
+    auto profile = std::make_shared<ReferenceProfile>(analyzeReference(ref, "ref"));
+    UserControls uc;
+    uc.reference = profile;
+    uc.referenceAmount = 1.0;
+    ProcessResult r = run(src, "music.transparent", uc);
+    const auto hz = longTermSpectrum(src).bandHz;
+    auto dev = [&](const AudioBuffer& b) {
+        const auto sb = sideToMidByBand(b);
+        double acc = 0;
+        int n = 0;
+        for (size_t i = 0; i < hz.size(); ++i)
+            if (hz[i] >= 150 && hz[i] <= 10000 && sb[i] > -40 && profile->sideToMidBandDb[i] > -40)
+            {
+                acc += std::pow(sb[i] - profile->sideToMidBandDb[i], 2);
+                ++n;
+            }
+        return n ? std::sqrt(acc / n) : 0.0;
+    };
+    const double before = dev(src), after = dev(r.output);
+    REPORT("side/mid by band deviation from reference %.2f -> %.2f dB rms", before, after);
+    CHECK_LE(after, 0.6 * before);
+
+    // Side low-cut: mid identical below the cut, side reduced at 30 Hz.
+    StereoSettings st;
+    st.sideLowCutHz = 80.0;
+    StereoProcessor sp(st);
+    AudioBuffer x(2, size_t(SR * 2), SR);
+    for (size_t i = 0; i < x.numFrames(); ++i)
+    {
+        const double t = double(i) / SR;
+        const double m = 0.3 * std::sin(2 * kPi * 30 * t), s = 0.2 * std::sin(2 * kPi * 30 * t + 1.0);
+        x.channel(0)[i] = float(m + s);
+        x.channel(1)[i] = float(m - s);
+    }
+    AudioBuffer y = ts::render(sp, x);
+    double midErr = 0, sideIn = 0, sideOut = 0;
+    for (size_t i = size_t(SR * 0.5); i < x.numFrames(); ++i)
+    {
+        const double mi = 0.5 * (x.channel(0)[i] + x.channel(1)[i]), mo = 0.5 * (y.channel(0)[i] + y.channel(1)[i]);
+        midErr = std::max(midErr, std::abs(mi - mo));
+        sideIn += std::pow(0.5 * (x.channel(0)[i] - x.channel(1)[i]), 2);
+        sideOut += std::pow(0.5 * (y.channel(0)[i] - y.channel(1)[i]), 2);
+    }
+    const double cut = 10 * std::log10(sideIn / sideOut);
+    REPORT("side low-cut 80 Hz: 30 Hz side reduced %.1f dB (2nd-order theory %.1f dB), mid max error %.2g", cut,
+           10 * std::log10(1 + std::pow(80.0 / 30.0, 4)), midErr);
+    CHECK_GE(cut, 15.0);
+    CHECK_LE(midErr, 1e-6);
+}

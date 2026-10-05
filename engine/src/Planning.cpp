@@ -761,14 +761,73 @@ void planCleanupTone(Plan& plan, const AnalysisReport& a, const PresetDef& p, co
         }
         if (sp.available && uc.reference && uc.reference->stereo && !a.stereo.dualMono && !voice)
         {
-            const double diff = uc.reference->sideToMidDb - a.stereo.sideToMidDb;
+            const double amt = clampv(uc.referenceAmount, 0.0, 1.0);
+            // Per-band side/mid difference (reference - source), 100 Hz-12 kHz.
+            const auto& rb = uc.reference->sideToMidBandDb;
+            const auto sb = sideToMidByBand(in);
+            const auto& hz = a.spectrum.bandHz;
+            std::vector<double> raw(hz.size(), 0.0);
+            std::vector<bool> have(hz.size(), false);
+            double mean = 0;
+            int cnt = 0;
+            if (!rb.empty() && sb.size() == hz.size() && rb.size() == hz.size())
+                for (size_t i = 0; i < hz.size(); ++i)
+                    if (hz[i] >= 100 && hz[i] <= 12000 && rb[i] > -40 && sb[i] > -40)
+                    {
+                        raw[i] = rb[i] - sb[i];
+                        have[i] = true;
+                        mean += raw[i];
+                        ++cnt;
+                    }
+            // Broadband width: the average per-band difference in dB when band data
+            // exists (so loud low bands do not decide the width of the top end),
+            // else the energy-weighted side/mid ratio.
+            const double diff = cnt >= 6 ? mean / cnt : uc.reference->sideToMidDb - a.stereo.sideToMidDb;
             if (std::abs(diff) > 1.0)
             {
-                s.width = clampv(dbToGain(diff * clampv(uc.referenceAmount, 0.0, 1.0)), 0.75, 1.35);
+                s.width = clampv(dbToGain(diff * amt), 0.75, 1.35);
                 on = true;
-                why = fmt("Reference side/mid %.1f dB vs source %.1f dB -> width %.2f (bounded 0.75-1.35).", uc.reference->sideToMidDb,
-                          a.stereo.sideToMidDb, s.width);
+                why = fmt("Reference is %+.1f dB %s in side/mid (%s) -> width %.2f (bounded 0.75-1.35).", diff, diff > 0 ? "wider" : "narrower",
+                          cnt >= 6 ? "average over bands" : "broadband", s.width);
             }
+            // Width by frequency: side EQ for the remaining per-band shape, bounded.
+            if (cnt >= 6)
+            {
+                const double wDb = gainToDb(s.width);
+                std::vector<double> dev(hz.size(), 0.0);
+                double rms = 0;
+                for (size_t i = 0; i < hz.size(); ++i)
+                {
+                    if (!have[i]) continue;
+                    double acc = 0;
+                    int c = 0;
+                    for (size_t j = i > 0 ? i - 1 : 0; j <= std::min(hz.size() - 1, i + 1); ++j)
+                        if (have[j]) { acc += raw[j] - wDb; ++c; }
+                    dev[i] = amt * acc / c;
+                    rms += (raw[i] - wDb) * (raw[i] - wDb);
+                }
+                rms = std::sqrt(rms / cnt);
+                if (rms > 1.0)
+                {
+                    s.sideEq = fitEqBands(hz, dev, 4.0, 6.0, sr, p.category, 100.0, 4);
+                    s.sideEq.erase(std::remove_if(s.sideEq.begin(), s.sideEq.end(), [](const EqBand& b) { return std::abs(b.gainDb) < 0.3; }),
+                                   s.sideEq.end());
+                    if (!s.sideEq.empty())
+                    {
+                        on = true;
+                        std::string list;
+                        for (auto& b : s.sideEq) list += fmt("%.0f Hz %+.1f; ", b.freq, b.gainDb);
+                        param(sp, "Side EQ (reference)", list);
+                        why += fmt(" Width by frequency still %.1f dB rms from the reference -> side EQ %s(bounded +4/-6 dB).", rms, list.c_str());
+                    }
+                }
+            }
+        }
+        if (sp.available && p.sideLowCutHz > 0 && !a.stereo.dualMono && a.stereo.isStereo && tn > 0 && s.monoBelowHz <= 0)
+        {
+            s.sideLowCutHz = p.sideLowCutHz;
+            on = true;
+            why += fmt(" Side low-cut %.0f Hz (12 dB/oct): low end stays centred and tight; mid untouched.", s.sideLowCutHz);
         }
         if (sp.available && voice && std::abs(a.stereo.balanceDb) > 2.0 && a.stereo.correlation > 0.7)
         {
@@ -779,6 +838,7 @@ void planCleanupTone(Plan& plan, const AnalysisReport& a, const PresetDef& p, co
         param(sp, "Width", fmt("%.2f", s.width));
         param(sp, "Mono below", s.monoBelowHz > 0 ? fmt("%.0f Hz (LR4)", s.monoBelowHz) : "off");
         param(sp, "Balance", fmt("%+.1f dB", s.balanceDb));
+        param(sp, "Side low-cut", s.sideLowCutHz > 0 ? fmt("%.0f Hz, 12 dB/oct", s.sideLowCutHz) : "off");
         decide(sp, on, sp.available ? why : "Mono or multichannel source.", uc);
     }
 }

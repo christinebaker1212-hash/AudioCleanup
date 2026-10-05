@@ -194,6 +194,11 @@ void StereoProcessor::prepare(double sr, int ch)
     }
     x_.reset();
     apMid_.reset();
+    sf_.clear();
+    for (const auto& b : s_.sideEq)
+        if (b.enabled) { sf_.emplace_back(); sf_.back().set(b.type, b.freq, b.q, b.gainDb, sr); }
+    if (s_.sideLowCutHz > 0) sideHp_.set(SvfType::Highpass, s_.sideLowCutHz, std::sqrt(0.5), 0.0, sr);
+    sideHp_.reset();
 }
 
 void StereoProcessor::process(float* const* ch, int nch, int n)
@@ -211,6 +216,8 @@ void StereoProcessor::process(float* const* ch, int nch, int n)
             s = hi;
             m = apMid_.process(m);
         }
+        for (auto& f : sf_) s = f.process(s);
+        if (s_.sideLowCutHz > 0) s = sideHp_.process(s);
         s *= s_.width;
         ch[0][i] = float(m + s);
         ch[1][i] = float(m - s);

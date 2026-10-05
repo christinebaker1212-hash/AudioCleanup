@@ -289,6 +289,7 @@ std::vector<PresetDef> build()
     {
         PresetDef p = mu;
         p.id = "music.warm";
+        p.sideLowCutHz = 40.0;
         p.resonanceDepthDb = 2.0;
         p.name = "Warm/Glue";
         p.description = "Bus-compressor glue (slow attack, auto-ish release), subtle tape saturation and a slightly "
@@ -305,6 +306,7 @@ std::vector<PresetDef> build()
     {
         PresetDef p = mu;
         p.id = "music.punchy";
+        p.sideLowCutHz = 60.0;
         p.resonanceDepthDb = 2.5;
         p.name = "Punchy";
         p.description = "Impact-forward master: controlled low end, transient-friendly compression (slower attack), "
@@ -321,6 +323,7 @@ std::vector<PresetDef> build()
     {
         PresetDef p = mu;
         p.id = "music.loud";
+        p.sideLowCutHz = 80.0;
         p.resonanceDepthDb = 3.5;
         p.name = "Loud/Dense";
         p.description = "Competitive loudness: multiband density, soft saturation before the limiter, firmer "
@@ -483,7 +486,7 @@ struct FlatJson
     X(targetNoiseFloorDb) X(minSnrForNoNr) X(denoiseStrength) X(maxActiveLossDb) X(neuralBelowSnrDb) X(neuralMix)     \
     X(sibilanceTargetDb) X(maxDeEssDb) X(maxPlosiveDb) X(hpfMaxHz) X(clickThreshold) X(clickMinPerMinute)             \
     X(humMaxDepthDb) X(dereverbAutoAboveRt60) X(dereverbMaxDb) X(maxNoiseGateDb) X(toneStrength) X(maxEqBoostDb)      \
-    X(maxEqCutDb) X(maxHighBoostDb) X(maxLowCutDb) X(harshnessRangeDb) X(resonanceDepthDb) X(boomRangeDb) X(saturationDriveDb) X(saturationAsymmetry) X(saturationMix)     \
+    X(maxEqCutDb) X(maxHighBoostDb) X(maxLowCutDb) X(harshnessRangeDb) X(resonanceDepthDb) X(sideLowCutHz) X(boomRangeDb) X(saturationDriveDb) X(saturationAsymmetry) X(saturationMix)     \
     X(levelerRangeDb) X(levelerStrength) X(transientAttackDb) X(transientSustainDb) X(compTargetGrDb)                  \
     X(mbXoverLowHz) X(mbXoverHighHz)
 } // namespace

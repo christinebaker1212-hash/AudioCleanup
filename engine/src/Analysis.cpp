@@ -462,7 +462,26 @@ ReferenceProfile analyzeReference(const AudioBuffer& b, const std::string& name)
     r.sideToMidDb = st.sideToMidDb;
     r.correlation = st.correlation;
     r.crestDb = shortTermCrestDb(b);
+    if (r.stereo) r.sideToMidBandDb = sideToMidByBand(b);
     return r;
+}
+
+std::vector<double> sideToMidByBand(const AudioBuffer& b)
+{
+    if (b.numChannels() != 2) return {};
+    AudioBuffer m(1, b.numFrames(), b.sampleRate), s(1, b.numFrames(), b.sampleRate);
+    for (size_t i = 0; i < b.numFrames(); ++i)
+    {
+        m.channel(0)[i] = 0.5f * (b.channel(0)[i] + b.channel(1)[i]);
+        s.channel(0)[i] = 0.5f * (b.channel(0)[i] - b.channel(1)[i]);
+    }
+    // Same frames for both: the mid signal decides which frames are active.
+    const NoiseProfile none{};
+    const auto sm = spectrumInfo(m, none), ss = spectrumInfo(s, none);
+    std::vector<double> d(sm.bandHz.size(), -100.0);
+    for (size_t i = 0; i < d.size() && i < ss.bandAbsDb.size(); ++i)
+        if (sm.bandAbsDb[i] > -140) d[i] = std::max(-100.0, ss.bandAbsDb[i] - sm.bandAbsDb[i]);
+    return d;
 }
 
 TempoInfo estimateTempo(const AudioBuffer& b)

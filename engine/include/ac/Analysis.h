@@ -153,7 +153,11 @@ struct ReferenceProfile
     double sideToMidDb = -100.0;
     double correlation = 1.0;
     double crestDb = 0.0;    ///< short-term crest: median peak-to-RMS of active 50 ms blocks (punch / density)
+    std::vector<double> sideToMidBandDb; ///< side minus mid level per SpectrumInfo band (empty if mono)
 };
+
+/** Side-minus-mid level (dB) per 1/3-octave band (SpectrumInfo centres); empty for non-stereo input. */
+std::vector<double> sideToMidByBand(const AudioBuffer& b);
 
 /** Short-term crest (dB): median sample-peak minus RMS over the active 50 ms
     blocks (within 20 dB of the loud P95 block). Level independent; limiting,
