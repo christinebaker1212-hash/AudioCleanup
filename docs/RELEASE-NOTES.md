@@ -12,6 +12,20 @@
   or a WAV named .mp3 opens; M4A/AAC and WMA give a clear message.
 - **MP3 export** (LAME): 320 kbps CBR, V0, 256, V2, 192 or 128, with a
   gapless header. The Ogg Vorbis quality is now selectable too.
+- **Much stronger de-clipping.** A sparse reconstruction method (A-SPADE)
+  rebuilds heavily clipped peaks that the previous method left alone. On
+  real recordings clipped 14 dB below peak, the result is 2-3x closer to
+  the original (e.g. solo trumpet 25.3 dB SDR vs 8.6 before). Clipping is
+  now found in each polarity separately and in recordings that were turned
+  down after clipping, and de-clipping runs first, on the raw samples.
+  Measured end to end (Noisy Recording Rescue, speech with noise, room,
+  hum and clipping together): DNSMOS overall 1.63 -> 2.04, intelligibility
+  (STOI) 0.538 -> 0.580. On clipped-only speech STOI rises 0.885 -> 0.930
+  (DNSMOS 3.20 -> 3.03).
+- **Stereo fixes.** Recordings with one channel in reverse polarity (they
+  cancel in mono) are corrected; clearly narrow music mixes get a small,
+  mono-compatible width lift above 300 Hz (at most 3 dB).
+- Exporting never replaces anything that is not a regular file.
 
 ---
 
