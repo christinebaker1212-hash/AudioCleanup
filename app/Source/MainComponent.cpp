@@ -726,6 +726,7 @@ void MainComponent::handleCommandLine(const juce::StringArray& args)
         else if (a == "--ab" && i + 1 < args.size()) script_.ab = args[++i];
         else if (a == "--screenshot" && i + 1 < args.size()) script_.screenshot = juce::File::getCurrentWorkingDirectory().getChildFile(args[++i]);
         else if (a == "--quit") script_.quit = true;
+        else if (a == "--format" && i + 1 < args.size()) controls_.setExportFormat(args[++i]);
         else if (a == "--stem" && i + 1 < args.size())
         {
             juce::Array<juce::File> st;

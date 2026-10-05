@@ -3,5 +3,7 @@
 add_library(af_io INTERFACE)
 target_sources(af_io INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/AudioIO.cpp ${CMAKE_CURRENT_SOURCE_DIR}/AudioIO.h)
 target_include_directories(af_io INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
-# Enable JUCE's bundled MP3 decoder (decode only; MP3 patents have expired).
-target_compile_definitions(af_io INTERFACE JUCE_USE_MP3AUDIOFORMAT=1 JUCE_USE_OGGVORBIS=1)
+# JUCE provides WAV, FLAC, AIFF and Ogg Vorbis; MP3 and Opus use the libraries below.
+target_compile_definitions(af_io INTERFACE JUCE_USE_OGGVORBIS=1)
+# Robust decoders and the MP3 encoder (cmake/Dependencies.cmake).
+target_link_libraries(af_io INTERFACE af_minimp3 af_opusfile af_lame)

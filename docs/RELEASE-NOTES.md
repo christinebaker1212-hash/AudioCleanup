@@ -1,3 +1,20 @@
+# AudioFinisher (unreleased)
+
+## Changes since v0.1.1
+
+- **MP3 and Ogg import fixed.** MP3 now uses a robust decoder (minimp3) that
+  decodes every frame: VBR files without a Xing header were cut short (a
+  5 s file loaded as 1 s), and MPEG-2/2.5 files (22.05, 16, 8 kHz: voice
+  memos, podcasts) did not open at all. MP3s are now gapless (the encoder's
+  start padding is removed when the file says how much).
+- **Ogg Opus / .opus import** (WhatsApp, Telegram, Discord, browser
+  recordings). Files are recognised by content, so an Opus file named .ogg
+  or a WAV named .mp3 opens; M4A/AAC and WMA give a clear message.
+- **MP3 export** (LAME): 320 kbps CBR, V0, 256, V2, 192 or 128, with a
+  gapless header. The Ogg Vorbis quality is now selectable too.
+
+---
+
 # AudioFinisher v0.1.1
 
 ## Changes since v0.1.0

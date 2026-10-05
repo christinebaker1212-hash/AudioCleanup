@@ -7,6 +7,7 @@
 #include <ac/Fft.h>
 #include <ac/Resampler.h>
 
+#include <cctype>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -30,8 +31,9 @@ void usage()
         "  compare <candidate> <reference>          measure a result against an approved reference\n"
         "options:\n"
         "  --lufs <v> --ceiling <dBTP> --mode unchanged|peak|integrated|momentary|shortterm\n"
-        "  --sr <Hz> --bits 16|24|32 --format wav|flac|ogg --ogg-quality 0..10 --dither none|tpdf|shaped\n"
-        "  inputs: WAV, FLAC, AIFF, Ogg Vorbis, MP3\n"
+        "  --sr <Hz> --bits 16|24|32 --format wav|flac|ogg|mp3 --dither none|tpdf|shaped\n"
+        "  --ogg-quality 0..10   --mp3-quality 0..5 (0 = 320 kbps CBR, 1 = V0, 2 = 256, 3 = V2, 4 = 192, 5 = 128)\n"
+        "  inputs: WAV, FLAC, AIFF, MP3/MP2, Ogg Vorbis, Ogg Opus (.ogg/.opus)\n"
         "  --cleanup <0..2> --tone <0..2> --dynamics <0..2> --tilt <dB>\n"
         "  --on a,b  --off a,b   force stages (keys: filter declip declick dehum denoise neural\n"
         "                        dereverb plosive deess eq dyneq resonance leveler expander transient\n"
@@ -128,8 +130,12 @@ bool controlsFromArgs(const Args& a, UserControls& uc, af::ExportOptions& ex, st
     }
     ex.bitDepth = a.has("bits") ? std::stoi(a.get("bits")) : 24;
     const auto fmtName = a.get("format", "wav");
-    ex.format = fmtName == "flac" ? af::FileFormat::Flac : fmtName == "ogg" ? af::FileFormat::Ogg : af::FileFormat::Wav;
+    ex.format = fmtName == "flac" ? af::FileFormat::Flac
+              : fmtName == "ogg"  ? af::FileFormat::Ogg
+              : fmtName == "mp3"  ? af::FileFormat::Mp3
+                                  : af::FileFormat::Wav;
     if (a.has("ogg-quality")) ex.oggQualityIndex = std::stoi(a.get("ogg-quality"));
+    if (a.has("mp3-quality")) ex.mp3QualityIndex = std::stoi(a.get("mp3-quality"));
     const auto d = a.get("dither", "tpdf");
     ex.dither = d == "none" ? DitherType::None : d == "shaped" ? DitherType::TpdfShaped : DitherType::Tpdf;
     return true;
@@ -194,6 +200,17 @@ int runProcess(const Args& a)
     ProcessResult r = process(rq, job);
     const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     if (a.has("plan")) std::printf("%s\n", describePlan(r.plan).c_str());
+    if (!a.has("format"))
+    {
+        // No --format: follow the output file's extension (out.mp3 -> MP3).
+        const auto& o = a.pos[1];
+        const auto dot = o.find_last_of('.');
+        std::string e = dot == std::string::npos ? "" : o.substr(dot + 1);
+        for (auto& ch : e) ch = char(std::tolower((unsigned char)ch));
+        if (e == "flac") ex.format = af::FileFormat::Flac;
+        else if (e == "ogg" || e == "oga") ex.format = af::FileFormat::Ogg;
+        else if (e == "mp3") ex.format = af::FileFormat::Mp3;
+    }
     if (!af::saveAudio(a.pos[1], r.output, ex, err)) { std::fprintf(stderr, "%s\n", err.c_str()); return 1; }
     if (a.has("removed"))
     {

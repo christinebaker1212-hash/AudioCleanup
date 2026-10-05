@@ -118,7 +118,7 @@ ControlsPanel::ControlsPanel()
     opt(optMultiband_, ac::StageId::Multiband);
     opt(optSaturation_, ac::StageId::Saturation);
 
-    format_.addItemList({ "WAV", "FLAC", "Ogg Vorbis" }, 1);
+    format_.addItemList({ "WAV", "FLAC", "Ogg Vorbis", "MP3" }, 1);
     format_.setSelectedId(1);
     bits_.addItemList({ "16-bit PCM", "24-bit PCM", "32-bit float" }, 1);
     bits_.setSelectedId(2);
@@ -126,13 +126,11 @@ ControlsPanel::ControlsPanel()
     dither_.setSelectedId(2);
     format_.onChange = [this] {
         if (format_.getSelectedId() == 2 && bits_.getSelectedId() == 3) bits_.setSelectedId(2);
-        // Ogg Vorbis is lossy and encodes from float: bit depth / dither do not apply.
-        const bool ogg = format_.getSelectedId() == 3;
-        bits_.setEnabled(!ogg);
-        dither_.setEnabled(!ogg);
-        bits_.setTooltip(ogg ? "Ogg Vorbis: encoded at ~256 kbps from 32-bit float" : "");
+        updateFormatControls();
     };
     for (auto* c : { &format_, &bits_, &dither_ }) addAndMakeVisible(*c);
+    addChildComponent(lossyQuality_);
+    updateFormatControls();
     addAndMakeVisible(export_);
     addAndMakeVisible(processAll_);
     addAndMakeVisible(exportAll_);
@@ -352,10 +350,39 @@ ac::UserControls ControlsPanel::controls() const
 af::ExportOptions ControlsPanel::exportOptions() const
 {
     af::ExportOptions e;
-    e.format = format_.getSelectedId() == 2 ? af::FileFormat::Flac : format_.getSelectedId() == 3 ? af::FileFormat::Ogg : af::FileFormat::Wav;
+    const int f = format_.getSelectedId();
+    e.format = f == 2 ? af::FileFormat::Flac : f == 3 ? af::FileFormat::Ogg : f == 4 ? af::FileFormat::Mp3 : af::FileFormat::Wav;
     e.bitDepth = bits_.getSelectedId() == 1 ? 16 : bits_.getSelectedId() == 2 ? 24 : 32;
     e.dither = dither_.getSelectedId() == 1 ? ac::DitherType::None : dither_.getSelectedId() == 2 ? ac::DitherType::Tpdf : ac::DitherType::TpdfShaped;
+    const int q = lossyQuality_.getSelectedId() - 1;
+    if (e.format == af::FileFormat::Ogg && q >= 0) e.oggQualityIndex = q;
+    if (e.format == af::FileFormat::Mp3 && q >= 0) e.mp3QualityIndex = q;
     return e;
+}
+
+void ControlsPanel::setExportFormat(const juce::String& name)
+{
+    const auto n = name.toLowerCase();
+    format_.setSelectedId(n == "flac" ? 2 : n == "ogg" ? 3 : n == "mp3" ? 4 : 1, juce::sendNotificationSync);
+}
+
+void ControlsPanel::updateFormatControls()
+{
+    // Lossy formats encode from 32-bit float: bit depth and dither do not
+    // apply, so their slot shows the encoder quality instead.
+    const int f = format_.getSelectedId();
+    const bool lossy = f == 3 || f == 4;
+    bits_.setVisible(!lossy);
+    dither_.setVisible(!lossy);
+    lossyQuality_.setVisible(lossy);
+    if (!lossy) return;
+    const auto opts = f == 3 ? af::oggQualityOptions() : af::mp3QualityOptions();
+    lossyQuality_.clear(juce::dontSendNotification);
+    for (size_t i = 0; i < opts.size(); ++i) lossyQuality_.addItem((f == 3 ? "Vorbis " : "") + juce::String(opts[i]), int(i) + 1);
+    lossyQuality_.setSelectedId(f == 3 ? std::min(9, int(opts.size())) : 1, juce::dontSendNotification);
+    lossyQuality_.setTooltip(f == 3 ? "Ogg Vorbis quality (encoded from 32-bit float)"
+                                    : "MP3 (LAME) bitrate. 320 kbps CBR or V0 for masters; encoded from 32-bit float "
+                                      "with a gapless header. Keep the true-peak ceiling at -1 dBTP or lower for lossy delivery.");
 }
 
 void ControlsPanel::setBusy(bool busy, double progress, const juce::String& what)
@@ -449,6 +476,7 @@ void ControlsPanel::resized()
         auto c = row(24);
         const int w = c.getWidth() / 3;
         format_.setBounds(c.removeFromLeft(w).reduced(1, 0));
+        lossyQuality_.setBounds(c.reduced(1, 0));
         bits_.setBounds(c.removeFromLeft(w).reduced(1, 0));
         dither_.setBounds(c.reduced(1, 0));
     }

@@ -8,6 +8,7 @@
 #include "AudioIO.h"
 
 #include <ac/Pipeline.h>
+#include <ac/Resampler.h>
 #include <ac/StemMixer.h>
 
 #include <juce_core/juce_core.h>
@@ -236,7 +237,7 @@ TEST("stem mixer: role-aware stems, buses, master; aligned with the static mix")
     CHECK(lag == 0);
 }
 
-TEST("formats: MP3 import (bundled decoder) and Ogg Vorbis round trip")
+TEST("formats: MP3 import (minimp3, gapless) and Ogg Vorbis round trip")
 {
     // MP3 fixture: 2 s, 1 kHz sine at -6 dBFS, stereo, 44.1 kHz, 192 kbps (LAME).
     AudioBuffer mp3;
@@ -247,7 +248,8 @@ TEST("formats: MP3 import (bundled decoder) and Ogg Vorbis round trip")
     REPORT("MP3: %s, %d ch, %.0f Hz, %.3f s", info.formatName.c_str(), mp3.numChannels(), mp3.sampleRate, mp3.durationSeconds());
     CHECK(mp3.numChannels() == 2);
     CHECK(mp3.sampleRate == 44100.0);
-    CHECK_NEAR(mp3.durationSeconds(), 2.0, 0.08); // encoder priming/padding
+    // The LAME tag's encoder delay and padding are removed: exactly 2 s.
+    CHECK(mp3.numFrames() == 88200);
     if (mp3.numFrames() > 44100)
     {
         const double a = ts::toneAmplitude(mp3.channel(0) + 22050, 22050, 1000, 44100);
@@ -256,7 +258,8 @@ TEST("formats: MP3 import (bundled decoder) and Ogg Vorbis round trip")
         CHECK_NEAR(gainToDb(a), -6.02, 0.3);
         CHECK_LE(thd, -40.0);
     }
-    CHECK(af::isSupportedExtension("x.mp3") && af::isSupportedExtension("x.OGG") && !af::isSupportedExtension("x.txt"));
+    CHECK(af::isSupportedExtension("x.mp3") && af::isSupportedExtension("x.OGG") && af::isSupportedExtension("x.opus") &&
+          !af::isSupportedExtension("x.txt"));
 
     // Ogg Vorbis: encode a processed-like signal, decode, check level/length/spectrum.
     AudioBuffer src = ts::pseudoMusic(48000, 4.0, 5, -16);
@@ -275,6 +278,110 @@ TEST("formats: MP3 import (bundled decoder) and Ogg Vorbis round trip")
     CHECK(std::llabs((long long)back.numFrames() - (long long)src.numFrames()) <= 2048);
     CHECK_NEAR(ts::rmsDb(back), ts::rmsDb(src), 0.3);
     CHECK(ts::bestLag(src.vec(0), back.vec(0), 2000) == 0);
+    dir.deleteRecursively();
+}
+
+TEST("formats: hard MP3s (MPEG-2, VBR without Xing header, ID3v1), Ogg Opus, misnamed files")
+{
+    std::string err;
+    af::SourceInfo info;
+    // MPEG-2 (22.05 kHz) VBR with no Xing/Info header and ID3v2 + ID3v1 tags: a
+    // length estimated from the first frame truncated these; MPEG-2 did not open.
+    AudioBuffer a;
+    CHECK_MSG(af::loadAudio(std::string(AF_TEST_DATA_DIR) + "/sine1k_mono_22k05_1s_vbr_noxing.mp3", a, err, &info), err);
+    REPORT("VBR, no Xing: %s, %d ch, %.0f Hz, %.3f s", info.formatName.c_str(), a.numChannels(), a.sampleRate, a.durationSeconds());
+    CHECK(a.numChannels() == 1 && a.sampleRate == 22050.0);
+    // Fixture tones are at -24.08 dBFS. Without a tag the encoder delay and
+    // padding stay (a few MPEG-2 frames), but nothing is cut off.
+    CHECK_GE(a.durationSeconds(), 1.0);
+    CHECK_LE(a.durationSeconds(), 1.1);
+    if (a.numFrames() > 16000)
+        CHECK_NEAR(gainToDb(ts::toneAmplitude(a.channel(0) + 5000, 11025, 1000, 22050)), -24.08, 0.3);
+
+    // Ogg Opus, and the same file under an .ogg name.
+    const auto opusPath = std::string(AF_TEST_DATA_DIR) + "/sine1k_stereo_48k_1s.opus";
+    AudioBuffer o;
+    CHECK_MSG(af::loadAudio(opusPath, o, err, &info), err);
+    REPORT("Opus: %s, %d ch, %.0f Hz, %.3f s", info.formatName.c_str(), o.numChannels(), o.sampleRate, o.durationSeconds());
+    CHECK(o.numChannels() == 2 && o.sampleRate == 48000.0);
+    CHECK(o.numFrames() == 48000); // pre-skip and end trimming applied
+    if (o.numFrames() == 48000)
+    {
+        const double lvl = gainToDb(ts::toneAmplitude(o.channel(1) + 12000, 24000, 1000, 48000));
+        REPORT("Opus decode: 1 kHz at %.2f dBFS (expected -24.08)", lvl);
+        CHECK_NEAR(lvl, -24.08, 0.3);
+    }
+    const auto dir = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("af_test_misnamed");
+    dir.createDirectory();
+    const auto asOgg = dir.getChildFile("voice_note.ogg");
+    CHECK(juce::File(opusPath).copyFileTo(asOgg));
+    AudioBuffer o2;
+    CHECK_MSG(af::loadAudio(asOgg.getFullPathName().toStdString(), o2, err), err);
+    CHECK(o2.numFrames() == o.numFrames());
+
+    // A WAV with an .mp3 name opens by content.
+    AudioBuffer w = ts::sine(44100, 2, 0.5, 440, 0.25);
+    af::ExportOptions ex;
+    ex.bitDepth = 32;
+    const auto wavPath = dir.getChildFile("tmp.wav").getFullPathName().toStdString();
+    CHECK_MSG(af::saveAudio(wavPath, w, ex, err), err);
+    const auto misnamed = dir.getChildFile("really_a_wav.mp3");
+    CHECK(juce::File(juce::String(wavPath)).moveFileTo(misnamed));
+    AudioBuffer w2;
+    CHECK_MSG(af::loadAudio(misnamed.getFullPathName().toStdString(), w2, err), err);
+    CHECK(w2.numFrames() == w.numFrames() && ts::maxAbsDiff(w, w2) == 0.0);
+
+    // Garbage is refused with a message, not a crash.
+    const auto junk = dir.getChildFile("junk.mp3");
+    junk.replaceWithText("this is not audio at all");
+    AudioBuffer j;
+    CHECK(!af::loadAudio(junk.getFullPathName().toStdString(), j, err) && !err.empty());
+    dir.deleteRecursively();
+}
+
+TEST("formats: MP3 export (LAME) round trip is gapless, aligned and level-exact")
+{
+    const auto dir = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("af_test_mp3");
+    dir.createDirectory();
+    std::string err;
+    af::SourceInfo info;
+    CHECK(af::mp3QualityOptions().size() >= 4);
+    struct Case { double sr; int ch; int quality; double expectRate; };
+    for (const Case c : { Case { 44100, 2, 0, 44100 }, Case { 48000, 2, 1, 48000 }, Case { 96000, 1, 0, 48000 }, Case { 44100, 1, 4, 44100 } })
+    {
+        AudioBuffer src = ts::pseudoMusic(c.sr, 4.0, 77, -16);
+        if (c.ch == 1)
+        {
+            AudioBuffer m(1, src.numFrames(), src.sampleRate);
+            for (size_t i = 0; i < src.numFrames(); ++i) m.channel(0)[i] = 0.5f * (src.channel(0)[i] + src.channel(1)[i]);
+            src = m;
+        }
+        af::ExportOptions ex;
+        ex.format = af::FileFormat::Mp3;
+        ex.mp3QualityIndex = c.quality;
+        const auto path = dir.getChildFile("out" + juce::String(int(c.sr)) + ".mp3").getFullPathName().toStdString();
+        CHECK_MSG(af::saveAudio(path, src, ex, err), err);
+        AudioBuffer back;
+        CHECK_MSG(af::loadAudio(path, back, err, &info), err);
+        const double expectFrames = double(src.numFrames()) * c.expectRate / c.sr;
+        // Rates above 48 kHz are resampled first; compare with the band-limited source.
+        const AudioBuffer ref = c.sr == c.expectRate ? src : resample(src, c.expectRate);
+        REPORT("MP3 %s @ %.0f Hz %d ch -> %s, %.0f Hz, %zu frames (expected %.0f); level %.2f -> %.2f dBFS",
+               af::mp3QualityOptions()[size_t(c.quality)].c_str(), c.sr, c.ch, info.formatName.c_str(), back.sampleRate,
+               back.numFrames(), expectFrames, ts::rmsDb(ref), ts::rmsDb(back));
+        CHECK(back.numChannels() == c.ch);
+        CHECK(back.sampleRate == c.expectRate);
+        CHECK_NEAR(double(back.numFrames()), expectFrames, 1.0); // gapless: no priming or padding
+        // 192 kbps low-passes at ~19 kHz, where this synthetic signal still has energy.
+        CHECK_NEAR(ts::rmsDb(back), ts::rmsDb(ref), c.quality == 4 ? 0.4 : 0.1);
+        CHECK(ts::bestLag(ref.vec(0), back.vec(0), 3000) == 0);
+    }
+    // Five channels cannot be MP3: a clear refusal, no file left behind.
+    AudioBuffer five(5, 4800, 48000);
+    af::ExportOptions ex;
+    ex.format = af::FileFormat::Mp3;
+    const auto bad = dir.getChildFile("five.mp3");
+    CHECK(!af::saveAudio(bad.getFullPathName().toStdString(), five, ex, err) && !bad.existsAsFile());
     dir.deleteRecursively();
 }
 

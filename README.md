@@ -77,7 +77,7 @@ For offline builds, point `FETCHCONTENT_SOURCE_DIR_<NAME>` at local checkouts.
 
 | Area | What it does |
 |---|---|
-| File list (left) | Drag & drop or **Add files...** (WAV, FLAC, AIFF, Ogg Vorbis, MP3). Originals are never modified or overwritten. |
+| File list (left) | Drag & drop or **Add files...** (WAV, FLAC, AIFF, MP3/MP2, Ogg Vorbis, Ogg Opus / .opus). Files are recognised by content, so a misnamed file still opens; MP3s from any encoder (CBR/VBR, MPEG-1/2/2.5, with or without a Xing header) decode completely and gaplessly. Originals are never modified or overwritten. |
 | Category + preset (right) | 15 presets in three families; user presets (★) are saved with **Save preset...** |
 | Reference matching | **Match a reference...** loads a finished track you like; the render moves toward its tonal balance, loudness, stereo width and dynamics: loudness range through slow level riding and compression, punch through transient emphasis. All of it is bounded, with *Amount* 0–100 % and the options *Match its loudness* / *Match its dynamics*. |
 | **PROCESS** | Analyses (cached per file and category) and renders on a background thread with progress and **Cancel**. With *Auto re-render* on, changing any control re-renders after a short pause. |
@@ -91,7 +91,7 @@ For offline builds, point `FETCHCONTENT_SOURCE_DIR_<NAME>` at local checkouts.
 | Analysis / Decision log | The full source analysis, before/after measurements, every render pass and correction, and stage timings. |
 | Stem mixer | Aligned stems with roles, gain, pan, bus routing, mute, per-stem treatment toggle, bus gain and glue; **MIX + MASTER** renders through the selected Music preset and the Output controls. |
 | Display scaling | Fits the screen at any Windows scaling (125 %, 150 %...); the right panel scrolls when the window is short and the toolbar wraps when narrow. **Interface size** (70–120 %, bottom of the right panel) shrinks or enlarges the whole UI on top of Windows scaling and is remembered. |
-| Export | WAV 16/24-bit PCM or 32-bit float, FLAC 16/24-bit, Ogg Vorbis (~256 kbps); TPDF or noise-shaped dither (engine-side, identical to preview). **Process all** and **Export all...** run batches, and **Batch consistency** aligns assets to the group target while keeping a set percentage of their intended differences. |
+| Export | WAV 16/24-bit PCM or 32-bit float, FLAC 16/24-bit, Ogg Vorbis (quality selectable, default ~256 kbps), MP3 (LAME: 320 kbps CBR, V0, 256, V2, 192, 128; gapless header); TPDF or noise-shaped dither (engine-side, identical to preview). **Process all** and **Export all...** run batches, and **Batch consistency** aligns assets to the group target while keeping a set percentage of their intended differences. |
 
 Command line (same engine): `AudioFinisher file.wav --category voice --preset voice.studio --process`
 opens the GUI with the file loaded and processed.
@@ -103,6 +103,7 @@ af_cli presets
 af_cli analyze in.wav --category voice
 af_cli process in.wav out.wav --preset voice.studio --plan --removed removed.wav --reference matched_original.wav
 af_cli process mix.wav master.flac --preset music.warm --lufs -12 --ceiling -1 --sr 44100 --bits 24 --format flac
+af_cli process voice_note.opus clean.mp3 --preset voice.rescue --mp3-quality 0
 af_cli process mix.wav master.wav --preset music.punchy --match pro_track.flac --match-amount 0.8
 af_cli batch outdir a.wav b.wav c.wav --preset sfx.game --consistency 0.5
 ```
@@ -149,7 +150,7 @@ for the raw output of the validation suite.
 
 ```
 engine/   pure C++20 DSP engine (no JUCE): analysis, processors, decision engine, renderer, stem mixer
-io/       WAV/FLAC/AIFF I/O on JUCE codecs with engine-side dither
+io/       audio file I/O: JUCE (WAV/FLAC/AIFF/Vorbis), minimp3, opusfile, LAME; engine-side dither
 app/      JUCE desktop application
 cli/      command-line renderer
 tests/    DSP validation suite (self-contained, CTest)

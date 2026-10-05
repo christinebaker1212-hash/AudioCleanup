@@ -18,6 +18,8 @@ public:
     const ac::PresetDef* preset() const;
     ac::UserControls controls() const;
     af::ExportOptions exportOptions() const;
+    /** Select the export format by name (wav, flac, ogg, mp3); used by command-line scripting. */
+    void setExportFormat(const juce::String& name);
     bool autoUpdate() const { return autoUpdate_.getToggleState(); }
     bool batchConsistency() const { return consistency_.getToggleState(); }
     double batchPreserve() const { return preserve_.getValue() / 100.0; }
@@ -74,6 +76,8 @@ private:
         optSaturation_{ "Force saturation" };
 
     juce::ComboBox format_, bits_, dither_;
+    juce::ComboBox lossyQuality_; ///< replaces bit depth + dither for Ogg Vorbis / MP3
+    void updateFormatControls();
     juce::TextButton export_{ "Export..." }, processAll_{ "Process all" }, exportAll_{ "Export all..." }, audio_{ "Audio device..." };
     juce::ToggleButton consistency_{ "Batch consistency" };
     std::shared_ptr<const ac::ReferenceProfile> reference_;
