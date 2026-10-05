@@ -697,6 +697,33 @@ void planCleanupTone(Plan& plan, const AnalysisReport& a, const PresetDef& p, co
         decide(sp, !S.dyneq.empty(), S.dyneq.empty() ? "Preset uses no dynamic EQ." : why, uc);
     }
 
+    // ---------------------------------------------------------- Resonance
+    {
+        auto& sp = plan.stage(StageId::Resonance);
+        auto& r = S.resonance;
+        r = ResonanceSettings{};
+        r.fftSize = StftProcessor::defaultFftSize(sr);
+        const double depth = p.resonanceDepthDb > 0 ? p.resonanceDepthDb : 3.0; // forced on a preset without it: gentle
+        r.depthDb = depth * std::min(std::max(tn, 0.0), 1.5);
+        r.thresholdDb = 4.0;
+        r.ratio = 3.0;
+        // Keep a voice's fundamental and first harmonics, and the low end of music, out of reach.
+        r.lowHz = voice ? std::max(300.0, 2.5 * (a.speech.f0MedianHz > 0 ? a.speech.f0MedianHz : 120.0)) : 250.0;
+        r.highHz = std::min(voice ? 10000.0 : 12000.0, 0.45 * sr);
+        r.attackMs = 5;
+        r.releaseMs = voice ? 70 : 100;
+        param(sp, "Range", fmt("%.0f Hz - %.0f Hz", r.lowHz, r.highHz));
+        param(sp, "Depth", fmt("%.1f dB max", r.depthDb));
+        param(sp, "Threshold", fmt("%.1f dB above neighbouring peaks, ratio %.0f:1", r.thresholdDb, r.ratio));
+        param(sp, "Attack/Release", fmt("%g / %g ms", r.attackMs, r.releaseMs));
+        const bool on = p.resonanceDepthDb > 0 && tn > 0;
+        decide(sp, on,
+               on ? fmt("Reduces components that stick out above the neighbouring peaks, only while they do (harsh or ringing "
+                        "resonances); even harmonic series pass untouched. Depth %.1f dB.", r.depthDb)
+                  : "Preset leaves resonances to the corrective EQ (optional).",
+               uc);
+    }
+
     // -------------------------------------------------------- Saturation
     {
         auto& sp = plan.stage(StageId::Saturation);

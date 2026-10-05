@@ -20,7 +20,7 @@ const char* sectionName(Section s);
 enum class StageId
 {
     Filter, Declip, Declick, Dehum, Denoise, Neural, Dereverb, Plosive, DeEss,
-    Eq, DynEq, Leveler, Expander, Transient, Compressor, Multiband, Saturation, Stereo,
+    Eq, DynEq, Resonance, Leveler, Expander, Transient, Compressor, Multiband, Saturation, Stereo,
     Limiter,
     Count
 };
@@ -78,6 +78,7 @@ struct ChainSettings
     DeEssSettings deess;
     std::vector<EqBand> eq;
     std::vector<DynamicEqBand> dyneq;
+    ResonanceSettings resonance;
     LevelerSettings leveler;
     ExpanderSettings expander;
     TransientSettings transient;

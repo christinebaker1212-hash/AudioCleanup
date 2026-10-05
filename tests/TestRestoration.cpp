@@ -402,3 +402,54 @@ TEST("neural speech enhancer: latency compensated, noise reduced")
     REPORT("44.1 kHz lag %d", lag44);
     CHECK(std::abs(lag44) <= 1);
 }
+
+TEST("resonance suppressor: intermittent resonance reduced, harmonic series and noise untouched")
+{
+    const double sr = 48000;
+    ts::Rng rng(11);
+    const size_t n = size_t(sr * 6.0);
+    AudioBuffer x(2, n, sr), base(2, n, sr);
+    const double resHz = 3150.0;
+    for (size_t i = 0; i < n; ++i)
+    {
+        const double t = double(i) / sr;
+        double h = 0;
+        for (int m = 1; m <= 30; ++m) h += 0.02 * std::sin(2 * kPi * 220.0 * m * t + m);
+        const double noise = 0.003 * rng.gauss();
+        const bool on = std::fmod(t, 1.0) >= 0.5;
+        const double res = on ? 0.08 * std::sin(2 * kPi * resHz * t) : 0.0; // ~12 dB above its neighbours
+        for (int c = 0; c < 2; ++c)
+        {
+            x.channel(c)[i] = float(h + noise + res);
+            base.channel(c)[i] = float(h + noise);
+        }
+    }
+    ResonanceSettings rs;
+    rs.fftSize = StftProcessor::defaultFftSize(sr);
+    ResonanceSuppressor sup(rs);
+    AudioBuffer y = ts::render(sup, x);
+    ResonanceSuppressor sup2(rs);
+    AudioBuffer yb = ts::render(sup2, base);
+    // Resonance level in the 'on' halves (skip 100 ms around switches).
+    auto amp = [&](const AudioBuffer& b, double f, double t0, double t1) {
+        const size_t a = size_t(t0 * sr), e = size_t(t1 * sr);
+        return ts::toneAmplitude(b.channel(0) + a, e - a, f, sr);
+    };
+    double rIn = 0, rOut = 0;
+    for (int s = 1; s < 6; ++s) { rIn += amp(x, resHz, s + 0.6, s + 0.9); rOut += amp(y, resHz, s + 0.6, s + 0.9); }
+    const double resCut = gainToDb(rIn / rOut);
+    double worstHarm = 0;
+    for (int m : { 2, 5, 10, 14, 15, 20, 30 })
+    {
+        const double f = 220.0 * m;
+        const double d = std::abs(gainToDb(amp(yb, f, 1.0, 5.0) / amp(base, f, 1.0, 5.0)));
+        worstHarm = std::max(worstHarm, d);
+    }
+    const double levelChange = ts::rmsDb(yb, size_t(sr), size_t(sr * 4)) - ts::rmsDb(base, size_t(sr), size_t(sr * 4));
+    REPORT("resonance cut %.1f dB (depth bound %.1f); harmonic series worst change %.2f dB; resonance-free level change %.2f dB; mean attenuation %.2f dB",
+           resCut, rs.depthDb, worstHarm, levelChange, sup.meanAttenuationDb());
+    CHECK_GE(resCut, 2.5);
+    CHECK_LE(resCut, rs.depthDb + 0.5);
+    CHECK_LE(worstHarm, 0.5);
+    CHECK_LE(std::abs(levelChange), 0.2);
+}

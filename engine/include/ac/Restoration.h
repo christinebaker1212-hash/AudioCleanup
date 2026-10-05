@@ -112,6 +112,48 @@ private:
     bool first_ = true;
 };
 
+struct ResonanceSettings
+{
+    double depthDb = 4.0;        ///< maximum attenuation of any bin
+    double thresholdDb = 4.0;    ///< excess over the local peak envelope before reduction starts
+    double ratio = 3.0;          ///< reduction of the excess above threshold (compressor-style)
+    double lowHz = 180.0;        ///< focus range (tapered half an octave at each edge)
+    double highHz = 12000.0;
+    double attackMs = 5.0;
+    double releaseMs = 90.0;
+    int fftSize = 2048;
+};
+
+/** Dynamic resonance suppression. Each frame, every bin is compared with
+    the peaks around it (moving maximum over +/-1/12 octave, at least
+    +/-300 Hz; reference = the louder of the mean peak level left and right of
+    that window, out to +/-1/2 octave), so an even harmonic series passes untouched and only a
+    component that sticks out above its neighbours (a ringing room mode, a
+    harsh vocal or guitar resonance, a whistling drum) is reduced, only while
+    it sticks out. Gains are linked across channels, spread over the window's
+    main lobe and smoothed in time (fast attack, slower release). */
+class ResonanceSuppressor : public StftProcessor
+{
+public:
+    explicit ResonanceSuppressor(const ResonanceSettings& s) : StftProcessor(s.fftSize), s_(s) {}
+    /** Power-weighted mean attenuation inside the focus range over the whole render (dB, >= 0). */
+    double meanAttenuationDb() const;
+    /** Largest per-frame mean attenuation seen (dB). */
+    double maxFrameAttenuationDb() const { return maxFrameAttn_; }
+
+protected:
+    void onPrepare() override;
+    void processFrame(std::vector<std::complex<float>*>& spectra) override;
+
+private:
+    ResonanceSettings s_;
+    int bins_ = 0;
+    std::vector<double> lvl_, mx_, env_, tgt_, g_, focus_, pre_;
+    std::vector<int> lo1_, hi1_, lo2_, hi2_;
+    double aAtt_ = 0, aRel_ = 0;
+    double pIn_ = 0, pOut_ = 0, maxFrameAttn_ = 0;
+};
+
 struct DereverbSettings
 {
     double rt60 = 0.5;           ///< seconds (estimated by analysis)

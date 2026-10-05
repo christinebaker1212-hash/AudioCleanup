@@ -34,7 +34,7 @@ void usage()
         "  inputs: WAV, FLAC, AIFF, Ogg Vorbis, MP3\n"
         "  --cleanup <0..2> --tone <0..2> --dynamics <0..2> --tilt <dB>\n"
         "  --on a,b  --off a,b   force stages (keys: filter declip declick dehum denoise neural\n"
-        "                        dereverb plosive deess eq dyneq leveler expander transient\n"
+        "                        dereverb plosive deess eq dyneq resonance leveler expander transient\n"
         "                        compressor multiband saturation stereo limiter)\n"
         "  --no-cleanup --no-tone --no-dynamics --no-output\n"
         "  --noise-region <startSec>:<endSec>\n"

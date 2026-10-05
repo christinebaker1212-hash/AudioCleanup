@@ -338,6 +338,7 @@ TEST("block-size independence: identical output for any block partitioning")
         [] { ExpanderSettings e; e.thresholdDb = -20; return std::make_unique<Expander>(e); },
         [] { TransientSettings t; t.attackDb = 6; return std::make_unique<TransientShaper>(t); },
         [] { DereverbSettings d; return std::make_unique<Dereverberator>(d); },
+        [] { ResonanceSettings r; r.thresholdDb = 1.0; return std::make_unique<ResonanceSuppressor>(r); },
         [] { DenoiseSettings d; d.profile.fftSize = 2048; d.profile.psd.assign(1025, 1e-3f); d.profile.valid = true; return std::make_unique<SpectralDenoiser>(d); },
     };
     for (auto& mk : makers)

@@ -39,6 +39,7 @@ const StageInfo kStages[] = {
     { "De-ess", "deess", Section::Cleanup },
     { "Corrective EQ", "eq", Section::Tone },
     { "Dynamic EQ", "dyneq", Section::Tone },
+    { "Resonance control", "resonance", Section::Tone },
     { "Level rider", "leveler", Section::Dynamics },
     { "Expander", "expander", Section::Dynamics },
     { "Transient shaper", "transient", Section::Dynamics },
@@ -107,6 +108,7 @@ std::unique_ptr<Processor> makeProcessor(StageId id, const ChainSettings& s)
         case StageId::DeEss: return std::make_unique<DeEsser>(s.deess);
         case StageId::Eq: return std::make_unique<ParametricEq>(s.eq);
         case StageId::DynEq: return std::make_unique<DynamicEq>(s.dyneq);
+        case StageId::Resonance: return std::make_unique<ResonanceSuppressor>(s.resonance);
         case StageId::Leveler: return std::make_unique<Leveler>(s.leveler);
         case StageId::Expander: return std::make_unique<Expander>(s.expander);
         case StageId::Transient: return std::make_unique<TransientShaper>(s.transient);
@@ -316,6 +318,35 @@ ProcessResult process(const ProcessRequest& req, const Job& job)
     // --------------------------------------------------------------- Tone
     runIfEnabled(StageId::Eq, 0.5, 0.55);
     runIfEnabled(StageId::DynEq, 0.55, 0.6);
+    if (plan.stage(StageId::Resonance).enabled)
+    {
+        // Render, check it only caught resonances (bounded mean attenuation), correct once.
+        phase(0.6, 0.61, stageName(StageId::Resonance));
+        for (int attempt = 0; attempt < 2; ++attempt)
+        {
+            StageMetrics m;
+            AudioBuffer y = runStage(StageId::Resonance, S, x, m, nullptr, holder, sub);
+            auto* rs = static_cast<ResonanceSuppressor*>(holder.get());
+            const double mean = rs->meanAttenuationDb(), peak = rs->maxFrameAttenuationDb();
+            plan.log.push_back(fmt("Resonance control pass %d: mean attenuation %.2f dB, loudest frame %.2f dB (depth %.1f dB).", attempt + 1,
+                                   mean, peak, S.resonance.depthDb));
+            auto& sp = plan.stage(StageId::Resonance);
+            if (mean <= 1.0 || attempt == 1 || sp.forced)
+            {
+                sp.params.emplace_back("Measured", fmt("mean %.2f dB, loudest frame %.2f dB", mean, peak));
+                x = std::move(y);
+                R.metrics.push_back(std::move(m));
+                break;
+            }
+            // Broad attenuation means it is reshaping the tone, not catching resonances.
+            S.resonance.depthDb *= 0.5;
+            S.resonance.thresholdDb += 2.0;
+            sp.reason += fmt(" Correction: mean attenuation %.2f dB > 1.0 dB -> depth %.1f dB, threshold %.1f dB.", mean, S.resonance.depthDb,
+                             S.resonance.thresholdDb);
+            plan.log.push_back(sp.reason);
+        }
+        throwIfCancelled(job);
+    }
 
     // ----------------------------------------------------------- Dynamics
     phase(0.6, 0.62, "Measuring for dynamics");

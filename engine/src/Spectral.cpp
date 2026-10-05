@@ -408,4 +408,119 @@ void Dereverberator::processFrame(std::vector<std::complex<float>*>& X)
     histPos_ = (histPos_ + 1) % L;
 }
 
+// ================================================================ Resonance
+void ResonanceSuppressor::onPrepare()
+{
+    bins_ = fftSize() / 2 + 1;
+    const double binHz = sampleRate() / fftSize();
+    for (auto* v : { &lvl_, &mx_, &env_, &tgt_, &focus_ }) v->assign(size_t(bins_), 0.0);
+    g_.assign(size_t(bins_), 0.0); // smoothed attenuation, dB (>= 0)
+    pre_.assign(size_t(bins_) + 1, 0.0);
+    lo1_.resize(size_t(bins_));
+    hi1_.resize(size_t(bins_));
+    lo2_.resize(size_t(bins_));
+    hi2_.resize(size_t(bins_));
+    // Peak window: +/-1/12 octave but at least +/-300 Hz, so neighbouring
+    // harmonics of any voice or instrument up to ~300 Hz fundamental fall inside.
+    // Side windows (for the envelope) lie outside the peak window, out to
+    // +/-1/2 octave (at least one more peak-window width).
+    const double r1 = std::pow(2.0, 1.0 / 12.0), r2 = std::pow(2.0, 1.0 / 2.0);
+    const int minHw = std::max(2, int(std::ceil(300.0 / binHz)));
+    for (int k = 0; k < bins_; ++k)
+    {
+        const int hw1 = std::max(minHw, int(std::ceil(k * (r1 - 1.0))));
+        lo1_[size_t(k)] = std::max(0, k - hw1);
+        hi1_[size_t(k)] = std::min(bins_ - 1, k + hw1);
+        lo2_[size_t(k)] = std::max(0, std::min(int(std::floor(k / r2)), k - 2 * hw1));
+        hi2_[size_t(k)] = std::min(bins_ - 1, std::max(int(std::ceil(k * r2)), k + 2 * hw1));
+        // Focus weight: 1 inside [lowHz, highHz], cosine taper over half an octave outside.
+        const double f = k * binHz;
+        double w = 0;
+        if (f >= s_.lowHz && f <= s_.highHz) w = 1;
+        else if (f > 0)
+        {
+            const double oct = f < s_.lowHz ? std::log2(s_.lowHz / f) : std::log2(f / s_.highHz);
+            w = oct < 0.5 ? 0.5 + 0.5 * std::cos(kPi * oct / 0.5) : 0.0;
+        }
+        focus_[size_t(k)] = w;
+    }
+    const double dt = double(hop()) / sampleRate();
+    aAtt_ = std::exp(-dt / std::max(1e-4, s_.attackMs * 0.001));
+    aRel_ = std::exp(-dt / std::max(1e-4, s_.releaseMs * 0.001));
+    pIn_ = pOut_ = maxFrameAttn_ = 0;
+}
+
+void ResonanceSuppressor::processFrame(std::vector<std::complex<float>*>& X)
+{
+    const int nch = numChannels();
+    double frameP = 0;
+    for (int k = 0; k < bins_; ++k)
+    {
+        double p = 0;
+        for (int c = 0; c < nch; ++c) p += std::norm(X[size_t(c)][k]);
+        p /= nch;
+        lvl_[size_t(k)] = 10.0 * std::log10(p + 1e-20);
+        frameP += p * focus_[size_t(k)];
+    }
+    // Silent frame: let gains relax, change nothing.
+    const bool silent = frameP < 1e-14 * fftSize();
+    // Local peak envelope: moving max over the peak window (prefix sums for the side means).
+    for (int k = 0; k < bins_; ++k)
+    {
+        double m = -400;
+        for (int j = lo1_[size_t(k)]; j <= hi1_[size_t(k)]; ++j) m = std::max(m, lvl_[size_t(j)]);
+        mx_[size_t(k)] = m;
+        pre_[size_t(k) + 1] = pre_[size_t(k)] + m;
+    }
+    // Envelope: the louder of the mean peak envelope left and right of the
+    // bin's own peak window. A component is reduced only when it stands above
+    // the typical peaks on both sides (edges of a harmonic series are safe).
+    const double slope = 1.0 - 1.0 / std::max(1.0, s_.ratio);
+    for (int k = 0; k < bins_; ++k)
+    {
+        const int la = lo2_[size_t(k)], le = lo1_[size_t(k)] - 1, ra = hi1_[size_t(k)] + 1, re = hi2_[size_t(k)];
+        // Judge a bin only with context on both sides (at least half a peak
+        // window each); otherwise the spectral tilt alone would read as a resonance.
+        const int need = std::max(1, (hi1_[size_t(k)] - lo1_[size_t(k)]) / 4);
+        if (le - la + 1 < need || re - ra + 1 < need)
+        {
+            env_[size_t(k)] = mx_[size_t(k)];
+            tgt_[size_t(k)] = 0.0;
+            continue;
+        }
+        const double env = std::max((pre_[size_t(le) + 1] - pre_[size_t(la)]) / double(le - la + 1),
+                                    (pre_[size_t(re) + 1] - pre_[size_t(ra)]) / double(re - ra + 1));
+        env_[size_t(k)] = env;
+        const double excess = lvl_[size_t(k)] - env_[size_t(k)] - s_.thresholdDb;
+        tgt_[size_t(k)] = silent ? 0.0 : focus_[size_t(k)] * clampv(excess * slope, 0.0, std::abs(s_.depthDb));
+    }
+    // Spread over the window's main lobe (+/-1 bin), then time smoothing.
+    double num = 0, den = 0;
+    for (int k = 0; k < bins_; ++k)
+    {
+        double t = tgt_[size_t(k)];
+        if (k > 0) t = std::max(t, tgt_[size_t(k - 1)]);
+        if (k + 1 < bins_) t = std::max(t, tgt_[size_t(k + 1)]);
+        double& g = g_[size_t(k)];
+        g = t > g ? aAtt_ * g + (1 - aAtt_) * t : aRel_ * g + (1 - aRel_) * t;
+        const float gain = float(dbToGain(-g));
+        if (g > 1e-4)
+            for (int c = 0; c < nch; ++c) X[size_t(c)][k] *= gain;
+        const double p = std::pow(10.0, lvl_[size_t(k)] / 10.0) * focus_[size_t(k)];
+        num += p * double(gain) * gain;
+        den += p;
+    }
+    if (!silent && den > 0)
+    {
+        pIn_ += den;
+        pOut_ += num;
+        maxFrameAttn_ = std::max(maxFrameAttn_, -10.0 * std::log10(std::max(1e-20, num / den)));
+    }
+}
+
+double ResonanceSuppressor::meanAttenuationDb() const
+{
+    return pIn_ > 0 ? -10.0 * std::log10(std::max(1e-20, pOut_ / pIn_)) : 0.0;
+}
+
 } // namespace ac

@@ -67,6 +67,7 @@ std::vector<PresetDef> build()
     {
         PresetDef p = base;
         p.id = "voice.natural";
+        p.resonanceDepthDb = 2.5;
         p.name = "Natural Dialogue";
         p.description = "Transparent dialogue cleanup for film/doc/interview. Keeps room tone continuous, breaths and "
                         "consonants intact; gentle level riding, light compression, EBU R128 delivery.";
@@ -85,6 +86,7 @@ std::vector<PresetDef> build()
     {
         PresetDef p = base;
         p.id = "voice.studio";
+        p.resonanceDepthDb = 4.0;
         p.name = "Studio Voiceover";
         p.description = "Clean, close, polished VO: quiet floor between phrases, controlled sibilance, consistent "
                         "level, -16 LUFS online delivery.";
@@ -105,6 +107,7 @@ std::vector<PresetDef> build()
     {
         PresetDef p = base;
         p.id = "voice.broadcast";
+        p.resonanceDepthDb = 4.0;
         p.name = "Broadcast Presence";
         p.description = "Forward, intelligible, dense voice for radio/TV promos: presence lift, firm multiband "
                         "control, tight de-essing; EBU R128 -23 LUFS / -1 dBTP by default.";
@@ -126,6 +129,7 @@ std::vector<PresetDef> build()
     {
         PresetDef p = base;
         p.id = "voice.warm";
+        p.resonanceDepthDb = 3.0;
         p.name = "Warm/Intimate";
         p.description = "Close, soft, intimate read: low-mid body, smoothed top, gentle tape-style saturation, "
                         "slow compression that keeps breath detail.";
@@ -145,6 +149,7 @@ std::vector<PresetDef> build()
     {
         PresetDef p = base;
         p.id = "voice.rescue";
+        p.resonanceDepthDb = 3.0;
         p.name = "Noisy Recording Rescue";
         p.description = "Maximum intelligibility from poor recordings: deep adaptive noise reduction plus the bundled "
                         "neural speech enhancer, hum/click repair, optional dereverb, intelligibility EQ.";
@@ -211,6 +216,7 @@ std::vector<PresetDef> build()
     {
         PresetDef p = sfx;
         p.id = "sfx.foley";
+        p.resonanceDepthDb = 4.0;
         p.name = "Detailed Foley";
         p.description = "Close, detailed Foley: quiet floor between moves (bounded downward expansion), "
                         "resonance control, gentle detail lift, light transient definition.";
@@ -240,6 +246,7 @@ std::vector<PresetDef> build()
     {
         PresetDef p = sfx;
         p.id = "sfx.game";
+        p.resonanceDepthDb = 3.0;
         p.name = "Game Asset Consistency";
         p.description = "Uniform delivery for game assets: consistent peak loudness, true-peak ceiling and gentle "
                         "spectral normalisation. Batch mode aligns a set while keeping intended differences.";
@@ -282,6 +289,7 @@ std::vector<PresetDef> build()
     {
         PresetDef p = mu;
         p.id = "music.warm";
+        p.resonanceDepthDb = 2.0;
         p.name = "Warm/Glue";
         p.description = "Bus-compressor glue (slow attack, auto-ish release), subtle tape saturation and a slightly "
                         "darker, fuller balance.";
@@ -297,6 +305,7 @@ std::vector<PresetDef> build()
     {
         PresetDef p = mu;
         p.id = "music.punchy";
+        p.resonanceDepthDb = 2.5;
         p.name = "Punchy";
         p.description = "Impact-forward master: controlled low end, transient-friendly compression (slower attack), "
                         "mild transient emphasis, presence.";
@@ -312,6 +321,7 @@ std::vector<PresetDef> build()
     {
         PresetDef p = mu;
         p.id = "music.loud";
+        p.resonanceDepthDb = 3.5;
         p.name = "Loud/Dense";
         p.description = "Competitive loudness: multiband density, soft saturation before the limiter, firmer "
                         "limiting within a hard gain-reduction bound.";
@@ -473,7 +483,7 @@ struct FlatJson
     X(targetNoiseFloorDb) X(minSnrForNoNr) X(denoiseStrength) X(maxActiveLossDb) X(neuralBelowSnrDb) X(neuralMix)     \
     X(sibilanceTargetDb) X(maxDeEssDb) X(maxPlosiveDb) X(hpfMaxHz) X(clickThreshold) X(clickMinPerMinute)             \
     X(humMaxDepthDb) X(dereverbAutoAboveRt60) X(dereverbMaxDb) X(maxNoiseGateDb) X(toneStrength) X(maxEqBoostDb)      \
-    X(maxEqCutDb) X(maxHighBoostDb) X(maxLowCutDb) X(harshnessRangeDb) X(boomRangeDb) X(saturationDriveDb) X(saturationAsymmetry) X(saturationMix)     \
+    X(maxEqCutDb) X(maxHighBoostDb) X(maxLowCutDb) X(harshnessRangeDb) X(resonanceDepthDb) X(boomRangeDb) X(saturationDriveDb) X(saturationAsymmetry) X(saturationMix)     \
     X(levelerRangeDb) X(levelerStrength) X(transientAttackDb) X(transientSustainDb) X(compTargetGrDb)                  \
     X(mbXoverLowHz) X(mbXoverHighHz)
 } // namespace
