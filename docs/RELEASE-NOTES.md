@@ -1,6 +1,8 @@
-# AudioFinisher (unreleased)
+# AudioFinisher v0.1.2
 
 ## Changes since v0.1.1
+
+### Files
 
 - **MP3 and Ogg import fixed.** MP3 now uses a robust decoder (minimp3) that
   decodes every frame: VBR files without a Xing header were cut short (a
@@ -12,6 +14,9 @@
   or a WAV named .mp3 opens; M4A/AAC and WMA give a clear message.
 - **MP3 export** (LAME): 320 kbps CBR, V0, 256, V2, 192 or 128, with a
   gapless header. The Ogg Vorbis quality is now selectable too.
+
+### Restoration and mastering
+
 - **Much stronger de-clipping.** A sparse reconstruction method (A-SPADE)
   rebuilds heavily clipped peaks that the previous method left alone. On
   real recordings clipped 14 dB below peak, the result is 2-3x closer to
@@ -25,7 +30,19 @@
 - **Stereo fixes.** Recordings with one channel in reverse polarity (they
   cancel in mono) are corrected; clearly narrow music mixes get a small,
   mono-compatible width lift above 300 Hz (at most 3 dB).
+- **Match a reference** (music): load a finished track you like and the
+  master moves toward its tonal balance, loudness, stereo width (by
+  frequency) and loudness range / punch, all bounded, with an Amount
+  control and *Match its loudness* / *Match its dynamics* options.
+- **Tempo-aware timing**: compressor, multiband and limiter release times
+  snap to note lengths when the music has a clear pulse.
+- **Resonance control**: a dynamic stage that tames harsh or ringing
+  resonances only while they stick out (voice presets, Detailed Foley,
+  Game Asset, Warm/Punchy/Loud music).
+- Dense music presets keep the low end centred with a gentle side low-cut.
 - Exporting never replaces anything that is not a regular file.
+
+Validation suite: 51 cases, 0 failures (Windows MSVC and Linux GCC).
 
 ---
 
