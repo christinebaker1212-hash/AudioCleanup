@@ -317,3 +317,50 @@ TEST("reference matching: tonal balance, loudness and width move to the referenc
     CHECK_GE(smAfter, smBefore + 1.5);
     CHECK_LE(r.outputStats.truePeakDb, findPreset("music.transparent")->ceilingDbTP + 0.1);
 }
+
+TEST("reference dynamics: LRA and short-term crest move toward a dense reference (closed loop, bounded)")
+{
+    // Source: wide macro dynamics (quiet and loud sections). Reference: the same
+    // material compressed and limited hard, as a dense commercial master.
+    AudioBuffer src = ts::pseudoMusic(SR, 48.0, 321, -20);
+    for (int c = 0; c < src.numChannels(); ++c)
+        for (size_t i = 0; i < src.numFrames(); ++i)
+        {
+            const double t = double(i) / SR;
+            src.channel(c)[i] *= float(dbToGain(std::fmod(t, 8.0) < 4.0 ? -9.0 : 0.0));
+        }
+    AudioBuffer ref = src;
+    {
+        CompressorSettings cs;
+        cs.ratio = 4.0;
+        cs.attackMs = 10;
+        cs.releaseMs = 300;
+        cs.thresholdDb = -38;
+        cs.detector = DetectorMode::Rms;
+        cs.rmsWindowMs = 50;
+        cs.maxGrDb = 30;
+        Compressor comp(cs);
+        ref = ts::render(comp, ref);
+        const double li = measureLoudness(ref, false, false).integrated;
+        LimiterSettings ls;
+        ls.ceilingDbTP = -1.0;
+        ls.inputGainDb = -9.0 - li;
+        TruePeakLimiter lim(ls);
+        ref = ts::render(lim, ref);
+    }
+    auto profile = std::make_shared<ReferenceProfile>(analyzeReference(ref, "dense"));
+    UserControls uc;
+    uc.reference = profile;
+    uc.referenceAmount = 1.0;
+    ProcessResult on = run(src, "music.transparent", uc);
+    uc.matchReferenceDynamics = false;
+    ProcessResult off = run(src, "music.transparent", uc);
+    const double crestOn = shortTermCrestDb(on.output), crestOff = shortTermCrestDb(off.output);
+    REPORT("reference LRA %.1f LU, crest %.1f dB, %.1f LUFS; matched LRA %.1f, crest %.1f, %.2f LUFS; without dynamics match LRA %.1f, crest %.1f, %.2f LUFS",
+           profile->loudness.lra, profile->crestDb, profile->loudness.integrated, on.outputStats.lra, crestOn, on.outputStats.integrated,
+           off.outputStats.lra, crestOff, off.outputStats.integrated);
+    CHECK_LE(std::abs(on.outputStats.lra - profile->loudness.lra), 0.6 * std::abs(off.outputStats.lra - profile->loudness.lra));
+    CHECK_LE(std::abs(on.outputStats.integrated - profile->loudness.integrated), 0.5);
+    CHECK_LE(std::abs(crestOn - profile->crestDb), std::abs(crestOff - profile->crestDb) + 0.3);
+    CHECK_LE(on.outputStats.truePeakDb, -1.0 + 0.1);
+}

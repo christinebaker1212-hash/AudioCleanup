@@ -461,7 +461,38 @@ ReferenceProfile analyzeReference(const AudioBuffer& b, const std::string& name)
     r.stereo = st.isStereo && !st.dualMono;
     r.sideToMidDb = st.sideToMidDb;
     r.correlation = st.correlation;
+    r.crestDb = shortTermCrestDb(b);
     return r;
+}
+
+double shortTermCrestDb(const AudioBuffer& b)
+{
+    const size_t blk = std::max<size_t>(16, size_t(b.sampleRate * 0.05));
+    std::vector<double> rmsDb, crest;
+    for (size_t s = 0; s + blk <= b.numFrames(); s += blk)
+    {
+        double pk = 0, e = 0;
+        for (int c = 0; c < b.numChannels(); ++c)
+        {
+            const float* x = b.channel(c);
+            for (size_t i = s; i < s + blk; ++i)
+            {
+                pk = std::max(pk, double(std::abs(x[i])));
+                e += double(x[i]) * x[i];
+            }
+        }
+        e /= double(blk * size_t(b.numChannels()));
+        if (e <= 1e-12) continue;
+        const double r = powerToDb(e, -300);
+        rmsDb.push_back(r);
+        crest.push_back(gainToDb(pk) - r);
+    }
+    if (rmsDb.empty()) return 0.0;
+    const double gate = percentile(rmsDb, 95.0) - 20.0;
+    std::vector<double> act;
+    for (size_t i = 0; i < rmsDb.size(); ++i)
+        if (rmsDb[i] >= gate) act.push_back(crest[i]);
+    return act.empty() ? 0.0 : median(act);
 }
 
 std::vector<double> bandLevelPercentiles(const AudioBuffer& b, SvfType detector, double freq, double q, double gateDb)

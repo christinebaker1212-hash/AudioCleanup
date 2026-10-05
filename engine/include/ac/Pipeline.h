@@ -50,6 +50,7 @@ struct UserControls
     std::shared_ptr<const ReferenceProfile> reference;
     double referenceAmount = 0.8;          ///< 0..1 how far to move toward the reference
     bool matchReferenceLoudness = true;    ///< deliver at the reference's integrated loudness
+    bool matchReferenceDynamics = true;    ///< move LRA / short-term crest toward the reference (closed loop)
 };
 
 struct StagePlan

@@ -137,7 +137,13 @@ struct ReferenceProfile
     bool stereo = false;
     double sideToMidDb = -100.0;
     double correlation = 1.0;
+    double crestDb = 0.0;    ///< short-term crest: median peak-to-RMS of active 50 ms blocks (punch / density)
 };
+
+/** Short-term crest (dB): median sample-peak minus RMS over the active 50 ms
+    blocks (within 20 dB of the loud P95 block). Level independent; limiting,
+    clipping and fast compression lower it, transient emphasis raises it. */
+double shortTermCrestDb(const AudioBuffer& b);
 
 /** Analyse a reference track for matching (tonal balance, loudness, dynamics, width). */
 ReferenceProfile analyzeReference(const AudioBuffer& b, const std::string& name = {});

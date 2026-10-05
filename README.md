@@ -79,7 +79,7 @@ For offline builds, point `FETCHCONTENT_SOURCE_DIR_<NAME>` at local checkouts.
 |---|---|
 | File list (left) | Drag & drop or **Add files...** (WAV, FLAC, AIFF, Ogg Vorbis, MP3). Originals are never modified or overwritten. |
 | Category + preset (right) | 15 presets in three families; user presets (★) are saved with **Save preset...** |
-| Reference matching | **Match a reference...** loads a finished track you like; the render moves toward its tonal balance, loudness and stereo width (bounded, *Amount* 0–100 %, optional *Match its loudness*). |
+| Reference matching | **Match a reference...** loads a finished track you like; the render moves toward its tonal balance, loudness, stereo width and dynamics: loudness range through slow level riding and compression, punch through transient emphasis. All of it is bounded, with *Amount* 0–100 % and the options *Match its loudness* / *Match its dynamics*. |
 | **PROCESS** | Analyses (cached per file and category) and renders on a background thread with progress and **Cancel**. With *Auto re-render* on, changing any control re-renders after a short pause. |
 | Simple controls | **Cleanup** (repair depth), **Tone** (correction strength + tilt), **Dynamics** (amount), **Output** (loudness mode, target, true-peak ceiling, sample rate). Each section can be switched off. |
 | Optional processors | Neural speech enhancer, de-reverb, multiband, saturation (or any stage via the advanced panel: Auto / On / Bypass). |

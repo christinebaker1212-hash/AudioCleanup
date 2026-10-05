@@ -83,6 +83,7 @@ the algorithm named here.
 | Background processing, progress, cancel | Verified (cancellation test); GUI uses a worker thread |
 | Reference comparison (`af_cli compare`) and blind listening sets (`tools/make_listening_set.py`) | Implemented |
 | Reference matching (GUI **Match a reference...**, CLI `--match`): 1/3-octave level-neutral balance fit (≤ 5 bells, bounded), closed-loop residual correction after dynamics, loudness target taken from the reference, bounded M/S width match; amount 0–100 % | Verified: synthetic test 2.72 → 1.28 dB rms deviation, loudness within 0.11 LU, width moves toward the reference within bounds; real track 3.39 → 0.88 dB rms (generic preset: 2.87) |
+| Reference dynamics (**Match its dynamics**, CLI `--no-match-dynamics` to disable): probes the delivered result (limiter at delivery rate and bounds) and closes the loop on LRA (slow zero-phase level riding, 3 s window / ~1 s glide, then bus compression) and short-term crest (transient emphasis, −3…+6 dB); keeps the best of ≤ 4 passes. A reference denser than the preset widens the limiter bound (hard cap 6 dB) and soft-clip bound (≤ 2.5 dB), logged | Verified: synthetic verse/chorus source LRA 5.8 → 2.1 LU vs reference 1.7 (5.8 without), loudness within 0.34 LU (2.8 LU short without); real track to a −8.7 LUFS master: −12.6 → −10.3 LUFS, LRA 3.1 → 2.4 vs 2.0. Cannot restore dynamics already limited away (stated in the log) |
 
 ## Known limits (stated plainly)
 
@@ -93,6 +94,10 @@ the algorithm named here.
 - **Loud/Dense and very dynamic material:** limiting (7 dB P99) and soft clipping (3 dB P99) are
   both bounded, so a very dynamic drum & bass track stops near −11 LUFS rather than −9. The report
   says so. Raise `maxClipDb` / `maxLimiterGrDb` in a user preset to trade density for loudness.
+- **Reference dynamics** can only remove dynamics, never restore them: a source that was already
+  limited harder than the reference stays denser. Matching a very loud reference is capped at
+  6 dB of limiter gain reduction, so the result may land 1–2 dB quieter than the reference; the
+  log reports the gap.
 - **RT60 estimation** is blind and coarse; de-reverb strength is bounded to compensate.
 - **Hum** harmonics masked by programme are left in place by design: depth never exceeds the
   measured prominence.

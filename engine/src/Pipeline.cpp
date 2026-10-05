@@ -192,7 +192,9 @@ ProcessResult process(const ProcessRequest& req, const Job& job)
 {
     if (!req.input || !req.preset) throw std::invalid_argument("process: missing input or preset");
     const AudioBuffer& input = *req.input;
-    const PresetDef& P = *req.preset;
+    // Working copy: a reference may widen the delivery bounds (logged below).
+    PresetDef Pw = *req.preset;
+    const PresetDef& P = Pw;
     const UserControls& uc = req.controls;
     ProcessResult R;
 
@@ -206,7 +208,7 @@ ProcessResult process(const ProcessRequest& req, const Job& job)
     const AnalysisReport& A = R.analysis;
 
     Plan& plan = R.plan;
-    plan.preset = &P;
+    plan.preset = req.preset;
     initPlan(plan);
     plan.loudnessMode = uc.loudnessMode.value_or(P.loudnessMode);
     plan.targetLufs = uc.targetLufs.value_or(P.targetLufs);
@@ -219,6 +221,23 @@ ProcessResult process(const ProcessRequest& req, const Job& job)
         plan.log.push_back(fmt("Reference '%s': %.2f LUFS, LRA %.1f LU, PLR %.1f dB, TP %.2f dBTP -> delivery target %.2f LUFS.",
                                uc.reference->name.c_str(), uc.reference->loudness.integrated, uc.reference->loudness.lra,
                                uc.reference->plrDb, uc.reference->loudness.truePeakDb, plan.targetLufs));
+        // A reference louder than the preset's intent shows how much density the
+        // delivery needs: widen the limiter (and, for dense references, soft-clip)
+        // bounds toward what such masters use, still bounded.
+        const auto& rf = *uc.reference;
+        if (uc.matchReferenceDynamics && rf.loudness.integrated > req.preset->targetLufs + 0.5 && rf.plrDb > 0)
+        {
+            const double lim = std::min(6.0, 3.0 + 0.75 * std::max(0.0, 11.0 - rf.plrDb));
+            const double clip = rf.plrDb < 9.0 ? std::min(2.5, 1.0 + (9.0 - rf.plrDb)) : 0.0;
+            if (lim > Pw.maxLimiterGrDb || clip > Pw.maxClipDb)
+            {
+                Pw.maxLimiterGrDb = std::max(Pw.maxLimiterGrDb, lim);
+                Pw.maxClipDb = std::max(Pw.maxClipDb, clip);
+                plan.log.push_back(fmt("Reference is louder than the preset intent (%.1f vs %.1f LUFS, PLR %.1f dB): limiter bound %.1f dB, "
+                                       "soft-clip bound %.1f dB.", rf.loudness.integrated, req.preset->targetLufs, rf.plrDb,
+                                       Pw.maxLimiterGrDb, Pw.maxClipDb));
+            }
+        }
     }
     plan.log.push_back("Preset " + P.name + " (" + categoryName(P.category) + "). Source analysis:\n" + describe(A));
 
@@ -301,11 +320,13 @@ ProcessResult process(const ProcessRequest& req, const Job& job)
     // ----------------------------------------------------------- Dynamics
     phase(0.6, 0.62, "Measuring for dynamics");
     planDynamics(plan, A, P, uc, x);
+    const AudioBuffer preDynamics = x;
+    const size_t metricsPreDynamics = R.metrics.size();
     runIfEnabled(StageId::Leveler, 0.62, 0.66);
     runIfEnabled(StageId::Expander, 0.66, 0.68);
     runIfEnabled(StageId::Transient, 0.68, 0.7);
-    const AudioBuffer preComp = x;
-    const size_t metricsPreComp = R.metrics.size();
+    AudioBuffer preComp = x;
+    size_t metricsPreComp = R.metrics.size();
     auto runBus = [&] {
         runIfEnabled(StageId::Compressor, 0.7, 0.72);
         runIfEnabled(StageId::Multiband, 0.72, 0.76);
@@ -369,6 +390,218 @@ ProcessResult process(const ProcessRequest& req, const Job& job)
             R.metrics.resize(metricsPreComp);
             runBus();
         }
+    }
+
+    // Closed-loop dynamics: with a reference, probe the delivered result
+    // (limiter at the delivery rate and bounds) and move macro dynamics (LRA:
+    // slow zero-phase level riding first, like fader automation, then bus
+    // compression) and punch (short-term crest: transient emphasis) toward
+    // the reference. Bounded; keeps the best probe.
+    if (uc.reference && uc.matchReferenceDynamics && uc.dynamics > 0 && uc.sectionOn[int(Section::Dynamics)] &&
+        uc.sectionOn[int(Section::Output)] &&
+        (plan.loudnessMode == LoudnessMode::Integrated || plan.loudnessMode == LoudnessMode::MaxShortTerm ||
+         plan.loudnessMode == LoudnessMode::MaxMomentary))
+    {
+        phase(0.81, 0.82, "Reference dynamics match");
+        const ReferenceProfile& rf = *uc.reference;
+        const double amt = clampv(uc.referenceAmount, 0.0, 1.0);
+        const bool voice = P.category == Category::Voice;
+        auto userOff = [&](StageId id) {
+            auto it = uc.overrides.find(id);
+            return it != uc.overrides.end() && it->second == Override::Off;
+        };
+        auto& lv = plan.stage(StageId::Leveler);
+        auto& cs = plan.stage(StageId::Compressor);
+        auto& ts = plan.stage(StageId::Transient);
+        const bool canLevel = lv.available && !lv.forced && !userOff(StageId::Leveler) && A.durationS >= 6.0;
+        const bool canComp = cs.available && !cs.forced && !userOff(StageId::Compressor);
+        const bool canTrans = !voice && ts.available && !ts.forced && !userOff(StageId::Transient);
+        struct Probe
+        {
+            double lra = 0, crest = 0, short_ = 0;
+        };
+        auto probe = [&](const AudioBuffer& xin) {
+            Probe pr;
+            const AudioBuffer xp = resample(xin, plan.outputSampleRate);
+            const double m = loudnessMetric(xp, plan.loudnessMode);
+            if (!std::isfinite(m)) return pr;
+            LimiterSettings ls;
+            ls.inputGainDb = plan.targetLufs - m;
+            ls.ceilingDbTP = plan.ceilingDbTP;
+            ls.lookaheadMs = P.limiterLookaheadMs;
+            ls.releaseFastMs = P.limiterReleaseMs;
+            ls.releaseSlowMs = P.limiterReleaseMs * 6.0;
+            AudioBuffer y;
+            for (int k = 0; k < 2; ++k)
+            {
+                TruePeakLimiter tl(ls);
+                RenderOptions ro;
+                y = renderProcessor(tl, xp, ro, {});
+                const double need = grP99(tl.grTrace()->values());
+                const double bound = P.maxLimiterGrDb + std::max(0.0, P.maxClipDb);
+                if (need <= bound + 0.1) break;
+                ls.inputGainDb -= need - bound;
+            }
+            const auto st = measureLoudness(y, false, true);
+            pr.lra = st.lra;
+            pr.crest = shortTermCrestDb(y);
+            pr.short_ = std::max(0.0, plan.targetLufs - loudnessMetric(y, plan.loudnessMode));
+            return pr;
+        };
+        const Probe p0 = probe(x);
+        const double tLra = p0.lra + amt * (rf.loudness.lra - p0.lra);
+        const double tCrest = p0.crest + amt * (rf.crestDb - p0.crest);
+        auto cost = [&](const Probe& q) {
+            return std::abs(q.lra - tLra) + (voice ? 0.0 : std::abs(q.crest - tCrest)) + q.short_;
+        };
+        plan.log.push_back(fmt("Reference dynamics: probe LRA %.1f LU / crest %.1f dB vs reference %.1f / %.1f -> aim %.1f / %.1f (amount %.0f%%).",
+                               p0.lra, p0.crest, rf.loudness.lra, rf.crestDb, tLra, tCrest, amt * 100));
+        const bool lraOk = std::abs(p0.lra - tLra) <= 0.7;
+        const bool crestOk = voice || std::abs(p0.crest - tCrest) <= 0.6;
+        if (rf.loudness.lra > 0 && !(lraOk && crestOk))
+        {
+            struct Best
+            {
+                double cost;
+                ChainSettings s;
+                bool levOn, compOn, transOn;
+                AudioBuffer x;
+                std::vector<StageMetrics> metrics;
+                Probe pr;
+            } best{ cost(p0), S, lv.enabled, cs.enabled, ts.enabled, x, R.metrics, p0 };
+            const bool levWasOn = lv.enabled, compWasOn = cs.enabled, transWasOn = ts.enabled;
+            const double dy = clampv(uc.dynamics, 0.0, 2.0);
+            // Rider: strength s scales the level spread by ~(1 - s) inside its range.
+            double levStrength = lv.enabled ? S.leveler.strength : 0.0;
+            double levRange = lv.enabled ? S.leveler.maxBoostDb : 0.0;
+            const double levMax = voice ? 0.9 : 0.8;
+            double compTarget = cs.enabled ? std::max(0.0, P.compTargetGrDb * dy) : 0.0;
+            const double compMax = std::min(10.0, std::max(P.compTargetGrDb, 2.0) + 6.0);
+            double attack = ts.enabled ? S.transient.attackDb : 0.0;
+            const double attackMin = -3.0, attackMax = std::min(6.0, std::max(0.0, P.transientAttackDb) + 4.0);
+            Probe cur = p0;
+            for (int it = 0; it < 4; ++it)
+            {
+                bool moved = false;
+                const double dL = cur.lra - tLra;
+                if (std::abs(dL) > 0.7)
+                {
+                    // Macro first: ride level (multiplicative model on the spread).
+                    if (canLevel && (dL > 0 ? levStrength < levMax - 0.01 : levStrength > 0.01))
+                    {
+                        const double keep = clampv((1.0 - levStrength) * tLra / std::max(0.5, cur.lra), 1.0 - levMax, 1.0);
+                        const double ns = clampv(1.0 - keep, 0.0, levMax);
+                        if (std::abs(ns - levStrength) > 0.02)
+                        {
+                            levStrength = ns;
+                            levRange = clampv(std::max(levRange, 1.5 * std::max(0.0, cur.lra - tLra) + 2.0), 0.0, voice ? 10.0 : 8.0);
+                            moved = true;
+                        }
+                    }
+                    // Then the bus compressor for what riding cannot reach (or to back off).
+                    if (!moved && canComp)
+                    {
+                        const double nt = clampv(compTarget + 1.5 * dL, 0.0, compMax);
+                        if (std::abs(nt - compTarget) > 0.1) { compTarget = nt; moved = true; }
+                    }
+                }
+                const double dC = tCrest - cur.crest;
+                if (canTrans && std::abs(dC) > 0.6)
+                {
+                    const double na = clampv(attack + 1.2 * dC, attackMin, attackMax);
+                    if (std::abs(na - attack) > 0.1) { attack = na; moved = true; }
+                }
+                if (!moved) break;
+                // Re-render rider, expander, transient shaper and bus from the snapshot.
+                x = preDynamics;
+                R.metrics.resize(metricsPreDynamics);
+                if (canLevel)
+                {
+                    S.leveler.strength = levStrength;
+                    S.leveler.maxBoostDb = S.leveler.maxCutDb = levRange;
+                    if (!voice)
+                    {
+                        // Music: ride on the short-term (3 s) level that LRA measures, with
+                        // LRA's relative gate (a noise-floor gate is meaningless for dense mixes).
+                        S.leveler.windowMs = 3000;
+                        S.leveler.smoothingMs = 600; // ~1 s zero-phase glide, ahead of section changes
+                        S.leveler.gateDb = S.leveler.targetDb - 20.0;
+                    }
+                    lv.enabled = levStrength > 0.02 && levRange > 0.5;
+                }
+                runIfEnabled(StageId::Leveler, 0.82, 0.83);
+                runIfEnabled(StageId::Expander, 0.83, 0.835);
+                S.transient.attackDb = attack;
+                if (canTrans) ts.enabled = std::abs(attack) >= 0.25 || std::abs(S.transient.sustainDb) >= 0.5;
+                runIfEnabled(StageId::Transient, 0.835, 0.84);
+                preComp = x;
+                metricsPreComp = R.metrics.size();
+                if (canComp)
+                {
+                    cs.enabled = compTarget > 0.05;
+                    if (cs.enabled)
+                    {
+                        const double gate = rmsLevelStats(preComp, 50.0, -90.0).p75 - 30.0;
+                        S.compressor.thresholdDb = compressorThreshold(preComp, S.compressor, compTarget, gate, nullptr);
+                        S.compressor.maxGrDb = std::max(6.0, compTarget * 2.5);
+                    }
+                }
+                runBus();
+                cur = probe(x);
+                const double c = cost(cur);
+                plan.log.push_back(fmt("Reference dynamics pass %d: rider %.0f%% / +/-%.1f dB, compressor GR target %.1f dB, transient attack %+.1f dB -> LRA %.1f, crest %.1f%s (cost %.2f).",
+                                       it + 1, lv.enabled ? levStrength * 100 : 0.0, lv.enabled ? levRange : 0.0, cs.enabled ? compTarget : 0.0,
+                                       ts.enabled ? attack : 0.0, cur.lra, cur.crest,
+                                       cur.short_ > 0.05 ? fmt(", %.1f dB short of target", cur.short_).c_str() : "", c));
+                if (c < best.cost - 0.05) best = Best{ c, S, lv.enabled, cs.enabled, ts.enabled, x, R.metrics, cur };
+            }
+            S = best.s;
+            lv.enabled = best.levOn;
+            cs.enabled = best.compOn;
+            ts.enabled = best.transOn;
+            x = std::move(best.x);
+            R.metrics = std::move(best.metrics);
+            const std::string summary = fmt("Reference dynamics: LRA %.1f -> %.1f LU, crest %.1f -> %.1f dB (aim %.1f / %.1f).", p0.lra,
+                                            best.pr.lra, p0.crest, best.pr.crest, tLra, tCrest);
+            plan.log.push_back(summary);
+            // The reference shows this material can be delivered denser than the
+            // preset's limiting bound: when its loudness is still out of reach,
+            // widen the bound by the shortfall (hard cap 6 dB), logged.
+            if (uc.matchReferenceLoudness && best.pr.short_ > 0.3 && Pw.maxLimiterGrDb < 6.0)
+            {
+                const double was = Pw.maxLimiterGrDb;
+                // Limiting has diminishing returns: each dB of shortfall needs ~1.5 dB more GR.
+                Pw.maxLimiterGrDb = std::min(6.0, Pw.maxLimiterGrDb + 1.5 * best.pr.short_);
+                plan.log.push_back(fmt("Reference loudness %.1f dB out of reach after dynamics: limiter bound %.1f -> %.1f dB (cap 6).",
+                                       best.pr.short_, was, Pw.maxLimiterGrDb));
+            }
+            auto setParam = [](StagePlan& sp, const std::string& k, const std::string& v) {
+                for (auto& kv : sp.params)
+                    if (kv.first == k) { kv.second = v; return; }
+                sp.params.emplace_back(k, v);
+            };
+            if (lv.enabled)
+            {
+                lv.reason = levWasOn ? lv.reason + " " + summary : "Enabled to match the reference's macro dynamics. " + summary;
+                setParam(lv, "Range", fmt("+/-%.1f dB", S.leveler.maxBoostDb));
+                setParam(lv, "Strength", fmt("%.0f%%", S.leveler.strength * 100));
+                setParam(lv, "Window", fmt("%.0f ms", S.leveler.windowMs));
+                setParam(lv, "Smoothing", fmt("%.0f ms zero-phase", S.leveler.smoothingMs));
+            }
+            if (cs.enabled)
+            {
+                cs.reason = compWasOn ? cs.reason + " " + summary : "Enabled to match the reference's dynamics. " + summary;
+                setParam(cs, "Threshold", fmt("%.1f dB", S.compressor.thresholdDb));
+                setParam(cs, "GR bound", fmt("%.1f dB", S.compressor.maxGrDb));
+            }
+            if (ts.enabled)
+            {
+                const std::string m = fmt("Reference punch match: attack %+.1f dB.", S.transient.attackDb);
+                ts.reason = transWasOn ? ts.reason + " " + m : "Enabled to match the reference's punch. " + m;
+                setParam(ts, "Attack", fmt("%+.1f dB", S.transient.attackDb));
+            }
+        }
+        else plan.log.push_back("Reference dynamics already within tolerance (LRA +/-0.7 LU, crest +/-0.6 dB).");
     }
 
     // Closed-loop tone: with a reference, measure what dynamics/saturation did to
@@ -607,6 +840,13 @@ ProcessResult process(const ProcessRequest& req, const Job& job)
             for (size_t i = 0; i < m.grTrace.size(); ++i) R.grTrace[i] += m.grTrace[i];
     plan.log.push_back(fmt("Result: %.2f LUFS (LRA %.1f), TP %.2f dBTP; A/B match gain for original %+.2f dB.", R.outputStats.integrated,
                            R.outputStats.lra, R.outputStats.truePeakDb, R.matchGainDb));
+    if (uc.reference && R.outputStats.integratedValid())
+    {
+        const auto& rf = *uc.reference;
+        plan.log.push_back(fmt("Versus reference '%s': loudness %.2f / %.2f LUFS, LRA %.1f / %.1f LU, PLR %.1f / %.1f dB, crest %.1f / %.1f dB.",
+                               rf.name.c_str(), R.outputStats.integrated, rf.loudness.integrated, R.outputStats.lra, rf.loudness.lra,
+                               R.outputStats.truePeakDb - R.outputStats.integrated, rf.plrDb, shortTermCrestDb(R.output), rf.crestDb));
+    }
     job.report(1.0, "Done");
     return R;
 }

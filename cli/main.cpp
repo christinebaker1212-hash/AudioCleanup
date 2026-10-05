@@ -38,7 +38,7 @@ void usage()
         "                        compressor multiband saturation stereo limiter)\n"
         "  --no-cleanup --no-tone --no-dynamics --no-output\n"
         "  --noise-region <startSec>:<endSec>\n"
-        "  --match <file> [--match-amount 0..1] [--no-match-loudness]  match a reference track\n"
+        "  --match <file> [--match-amount 0..1] [--no-match-loudness] [--no-match-dynamics]  match a reference track\n"
         "  --removed <file>  --reference <file> (loudness-matched original)  --plan (print plan)\n"
         "  --user-preset <json>  load a user preset file instead of --preset");
 }
@@ -173,6 +173,7 @@ int runProcess(const Args& a)
         rq.controls.reference = std::make_shared<ReferenceProfile>(analyzeReference(refAudio, nm));
         if (a.has("match-amount")) rq.controls.referenceAmount = std::stod(a.get("match-amount"));
         rq.controls.matchReferenceLoudness = !a.has("no-match-loudness");
+        rq.controls.matchReferenceDynamics = !a.has("no-match-dynamics");
     }
     if (a.has("noise-region"))
     {

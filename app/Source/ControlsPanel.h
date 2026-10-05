@@ -81,6 +81,7 @@ private:
     juce::Label refName_, refAmountL_;
     juce::Slider refAmount_;
     juce::ToggleButton refLoudness_{ "Match its loudness" };
+    juce::ToggleButton refDynamics_{ "Match its dynamics" };
     juce::Label uiSizeL_;
     juce::ComboBox uiSize_;
     int contentHeight_ = 800;

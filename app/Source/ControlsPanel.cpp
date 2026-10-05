@@ -168,6 +168,9 @@ ControlsPanel::ControlsPanel()
     refLoudness_.setToggleState(true, juce::dontSendNotification);
     refLoudness_.onClick = [this] { changed(); };
     addAndMakeVisible(refLoudness_);
+    refDynamics_.setToggleState(true, juce::dontSendNotification);
+    refDynamics_.onClick = [this] { changed(); };
+    addAndMakeVisible(refDynamics_);
     setReference(nullptr);
 
     uiSizeL_.setText("Interface size", juce::dontSendNotification);
@@ -246,6 +249,7 @@ void ControlsPanel::setReference(std::shared_ptr<const ac::ReferenceProfile> r)
     refClear_.setEnabled(on);
     refAmount_.setEnabled(on);
     refLoudness_.setEnabled(on);
+    refDynamics_.setEnabled(on);
     if (on)
         refName_.setText(juce::String(reference_->name) + ":  " + juce::String(reference_->loudness.integrated, 1) + " LUFS, LRA " +
                              juce::String(reference_->loudness.lra, 1) + " LU, TP " + juce::String(reference_->loudness.truePeakDb, 1) + " dBTP",
@@ -341,6 +345,7 @@ ac::UserControls ControlsPanel::controls() const
     c.reference = reference_;
     c.referenceAmount = refAmount_.getValue() / 100.0;
     c.matchReferenceLoudness = refLoudness_.getToggleState();
+    c.matchReferenceDynamics = refDynamics_.getToggleState();
     return c;
 }
 
@@ -399,11 +404,14 @@ void ControlsPanel::resized()
         auto c = row(22);
         refAmountL_.setBounds(c.removeFromLeft(110));
         refAmount_.setBounds(c);
-        refLoudness_.setBounds(row(20));
+        auto t = row(20);
+        refLoudness_.setBounds(t.removeFromLeft(t.getWidth() / 2));
+        refDynamics_.setBounds(t);
     }
     refAmountL_.setVisible(reference_ != nullptr);
     refAmount_.setVisible(reference_ != nullptr);
     refLoudness_.setVisible(reference_ != nullptr);
+    refDynamics_.setVisible(reference_ != nullptr);
     {
         auto c = row(40);
         cancel_.setBounds(c.removeFromRight(70));
