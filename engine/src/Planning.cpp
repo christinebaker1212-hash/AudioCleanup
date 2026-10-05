@@ -207,6 +207,24 @@ double thresholdFor(double L, double gr, const CompressorSettings& cs)
 
 } // namespace
 
+double snapToNote(double ms, double bpm, std::string* label)
+{
+    if (!(bpm > 0) || !(ms > 0)) return ms;
+    const double beat = 60000.0 / bpm; // quarter note
+    static const double mult[] = { 0.125, 0.25, 0.5, 1.0, 2.0 };
+    static const char* name[] = { "1/32", "1/16", "1/8", "1/4", "1/2" };
+    int best = -1;
+    double bestD = std::log2(1.6) + 1e-9;
+    for (int i = 0; i < 5; ++i)
+    {
+        const double d = std::abs(std::log2(beat * mult[i] / ms));
+        if (d < bestD) { bestD = d; best = i; }
+    }
+    if (best < 0) return ms;
+    if (label) *label = fmt("%s note at %.1f BPM", name[best], bpm);
+    return beat * mult[best];
+}
+
 double compressorThreshold(const AudioBuffer& x, const CompressorSettings& c, double targetGr, double gateDb, double* p95Out)
 {
     const double winMs = c.detector == DetectorMode::Rms ? c.rmsWindowMs : 1.0;
@@ -751,6 +769,20 @@ void planDynamics(Plan& plan, const AnalysisReport& a, const PresetDef& p, const
         active1 = st.p75;
     }
     plan.log.push_back(fmt("After cleanup+tone: %.1f LUFS, LRA %.1f LU, noise floor %.1f dBFS.", ls1.integrated, ls1.lra, noise1.levelDb));
+    // Tempo sync: release times on the song's note grid, so gain recovers in
+    // time with the groove instead of pumping across it.
+    const bool tempoOn = uc.tempoSync && p.category == Category::Music && a.tempo.reliable();
+    plan.limiterSlowReleaseMs = p.limiterReleaseMs * 6.0;
+    if (tempoOn)
+    {
+        std::string note;
+        plan.limiterSlowReleaseMs = snapToNote(plan.limiterSlowReleaseMs, a.tempo.bpm, &note);
+        plan.log.push_back(fmt("Tempo %.1f BPM (confidence %.2f): compressor, multiband and limiter releases snapped to note lengths "
+                               "(limiter sustained release %.0f ms = %s).", a.tempo.bpm, a.tempo.confidence, plan.limiterSlowReleaseMs,
+                               note.empty() ? "unchanged, no note length within x1.6" : note.c_str()));
+    }
+    else if (p.category == Category::Music && a.tempo.bpm > 0 && uc.tempoSync)
+        plan.log.push_back(fmt("No clear pulse (tempo confidence %.2f): preset release times kept.", a.tempo.confidence));
 
     // ------------------------------------------------------------ Leveler
     {
@@ -843,10 +875,13 @@ void planDynamics(Plan& plan, const AnalysisReport& a, const PresetDef& p, const
         c.thresholdDb = compressorThreshold(x1, c, target, active1 - 30.0, &p95);
         c.maxGrDb = std::max(6.0, target * 2.5);
         c.makeupDb = 0.0;
+        std::string note;
+        if (tempoOn) c.releaseMs = snapToNote(c.releaseMs, a.tempo.bpm, &note);
         param(sp, "Threshold", fmt("%.1f dB", c.thresholdDb));
         param(sp, "Ratio", fmt("%.1f:1", c.ratio));
         param(sp, "Knee", fmt("%.0f dB soft", c.kneeDb));
-        param(sp, "Attack/Release", fmt("%.0f / %.0f ms", c.attackMs, c.releaseMs));
+        param(sp, "Attack/Release", note.empty() ? fmt("%.0f / %.0f ms", c.attackMs, c.releaseMs)
+                                                 : fmt("%.0f / %.0f ms (release = %s)", c.attackMs, c.releaseMs, note.c_str()));
         param(sp, "Detector", c.detector == DetectorMode::Rms ? fmt("RMS %.0f ms", c.rmsWindowMs) : "peak");
         param(sp, "Stereo link", fmt("%.0f%%", c.stereoLink * 100));
         param(sp, "Sidechain HPF", c.sidechainHpfHz > 0 ? fmt("%.0f Hz", c.sidechainHpfHz) : "off");
@@ -890,7 +925,7 @@ void planDynamics(Plan& plan, const AnalysisReport& a, const PresetDef& p, const
             cs.ratio = 2.5;
             cs.kneeDb = 6;
             cs.attackMs = atk[b];
-            cs.releaseMs = rel[b];
+            cs.releaseMs = tempoOn ? snapToNote(rel[b], a.tempo.bpm) : rel[b];
             cs.detector = DetectorMode::Rms;
             cs.rmsWindowMs = 10;
             cs.stereoLink = 1.0;
@@ -902,7 +937,8 @@ void planDynamics(Plan& plan, const AnalysisReport& a, const PresetDef& p, const
         }
         param(sp, "Crossovers", fmt("%.0f / %.0f Hz, Linkwitz-Riley 24 dB/oct, allpass-compensated", m.xoverLowHz, m.xoverHighHz));
         param(sp, "Bands", thr);
-        param(sp, "Ratio", "2.5:1, 6 dB knee; attack 30/15/8 ms; release 200/120/80 ms");
+        param(sp, "Ratio", fmt("2.5:1, 6 dB knee; attack 30/15/8 ms; release %.0f/%.0f/%.0f ms%s", m.band[0].releaseMs, m.band[1].releaseMs,
+                               m.band[2].releaseMs, tempoOn ? fmt(" (note lengths at %.1f BPM)", a.tempo.bpm).c_str() : ""));
         decide(sp, p.multibandDefault && dy > 0,
                p.multibandDefault ? "Preset uses multiband density; thresholds from per-band detector statistics."
                                   : "Optional (off for this preset).",

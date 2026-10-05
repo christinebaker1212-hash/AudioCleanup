@@ -39,7 +39,7 @@ void usage()
         "  --no-cleanup --no-tone --no-dynamics --no-output\n"
         "  --noise-region <startSec>:<endSec>\n"
         "  --match <file> [--match-amount 0..1] [--no-match-loudness] [--no-match-dynamics]  match a reference track\n"
-        "  --removed <file>  --reference <file> (loudness-matched original)  --plan (print plan)\n"
+        "  --removed <file>  --reference <file> (loudness-matched original)  --plan (print plan)  --no-tempo-sync\n"
         "  --user-preset <json>  load a user preset file instead of --preset");
 }
 
@@ -94,6 +94,7 @@ bool controlsFromArgs(const Args& a, UserControls& uc, af::ExportOptions& ex, st
 {
     if (a.has("lufs")) uc.targetLufs = std::stod(a.get("lufs"));
     if (a.has("ceiling")) uc.ceilingDbTP = std::stod(a.get("ceiling"));
+    if (a.has("no-tempo-sync")) uc.tempoSync = false;
     if (a.has("mode"))
     {
         const auto m = a.get("mode");

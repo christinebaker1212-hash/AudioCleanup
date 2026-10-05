@@ -54,6 +54,20 @@ struct TransientInfo
     double envelopeCrestDb = 0.0;
 };
 
+/** Tempo from the onset-strength autocorrelation (music only). */
+struct TempoInfo
+{
+    double bpm = 0.0;          ///< 0 = not estimated
+    double confidence = 0.0;   ///< normalised autocorrelation at the beat lag (0..1); >= 0.2 is a clear pulse
+    bool reliable() const { return bpm > 0 && confidence >= 0.2; }
+};
+
+/** Estimate tempo (60-200 BPM): log-magnitude spectral flux at 200 frames/s,
+    autocorrelation with a 4-harmonic comb and a broad prior around 120 BPM.
+    Like any beat tracker it can report half or double time (174 vs 87 BPM);
+    for timing purposes those give the same note-length grid. */
+TempoInfo estimateTempo(const AudioBuffer& b);
+
 struct StereoInfo
 {
     bool isStereo = false;
@@ -100,6 +114,7 @@ struct AnalysisReport
     double clicksPerMinute = 0.0;
     SpeechInfo speech;
     TransientInfo transients;
+    TempoInfo tempo;
     StereoInfo stereo;
     SpectrumInfo spectrum;
     double rt60 = 0.0;            ///< 0 = could not be estimated

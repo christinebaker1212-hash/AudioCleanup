@@ -358,7 +358,7 @@ ProcessResult process(const ProcessRequest& req, const Job& job)
             probe.ceilingDbTP = plan.ceilingDbTP;
             probe.lookaheadMs = P.limiterLookaheadMs;
             probe.releaseFastMs = P.limiterReleaseMs;
-            probe.releaseSlowMs = P.limiterReleaseMs * 6.0;
+            probe.releaseSlowMs = plan.limiterSlowReleaseMs > 0 ? plan.limiterSlowReleaseMs : P.limiterReleaseMs * 6.0;
             TruePeakLimiter tl(probe);
             RenderOptions ro;
             renderProcessor(tl, xp, ro, {});
@@ -430,7 +430,7 @@ ProcessResult process(const ProcessRequest& req, const Job& job)
             ls.ceilingDbTP = plan.ceilingDbTP;
             ls.lookaheadMs = P.limiterLookaheadMs;
             ls.releaseFastMs = P.limiterReleaseMs;
-            ls.releaseSlowMs = P.limiterReleaseMs * 6.0;
+            ls.releaseSlowMs = plan.limiterSlowReleaseMs > 0 ? plan.limiterSlowReleaseMs : P.limiterReleaseMs * 6.0;
             AudioBuffer y;
             for (int k = 0; k < 2; ++k)
             {
@@ -653,7 +653,7 @@ ProcessResult process(const ProcessRequest& req, const Job& job)
     LimiterSettings& L = S.limiter;
     L.lookaheadMs = P.limiterLookaheadMs;
     L.releaseFastMs = P.limiterReleaseMs;
-    L.releaseSlowMs = P.limiterReleaseMs * 6.0;
+    L.releaseSlowMs = plan.limiterSlowReleaseMs > 0 ? plan.limiterSlowReleaseMs : P.limiterReleaseMs * 6.0;
     L.ceilingDbTP = plan.ceilingDbTP;
     LoudnessMode mode = plan.loudnessMode;
     LoudnessStats xs;

@@ -51,6 +51,7 @@ struct UserControls
     double referenceAmount = 0.8;          ///< 0..1 how far to move toward the reference
     bool matchReferenceLoudness = true;    ///< deliver at the reference's integrated loudness
     bool matchReferenceDynamics = true;    ///< move LRA / short-term crest toward the reference (closed loop)
+    bool tempoSync = true;                 ///< music: snap compressor/limiter release times to note lengths
 };
 
 struct StagePlan
@@ -96,6 +97,7 @@ struct Plan
     double targetLufs = -16.0;
     double ceilingDbTP = -1.0;
     double outputSampleRate = 48000.0;
+    double limiterSlowReleaseMs = 0.0; ///< sustained limiter release (tempo-synced for music); 0 = preset default
     std::vector<std::string> log;  ///< measurements and corrections, in order
 
     StagePlan& stage(StageId id) { return stages[size_t(id)]; }

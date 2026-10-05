@@ -364,3 +364,70 @@ TEST("reference dynamics: LRA and short-term crest move toward a dense reference
     CHECK_LE(std::abs(crestOn - profile->crestDb), std::abs(crestOff - profile->crestDb) + 0.3);
     CHECK_LE(on.outputStats.truePeakDb, -1.0 + 0.1);
 }
+
+TEST("tempo: detects the beat of drum patterns, reports no pulse on noise")
+{
+    ts::Rng rng(77);
+    for (double bpm : { 92.0, 128.0, 174.0 })
+    {
+        // Kick on every beat, hat on eighths, over a quiet noise bed.
+        AudioBuffer x(2, size_t(SR * 20.0), SR);
+        const double beat = 60.0 / bpm;
+        for (size_t i = 0; i < x.numFrames(); ++i)
+        {
+            const double t = double(i) / SR;
+            const double tb = std::fmod(t, beat), te = std::fmod(t, beat * 0.5);
+            const double kick = 0.6 * std::exp(-tb * 30.0) * std::sin(2 * kPi * (50 + 80 * std::exp(-tb * 40)) * tb);
+            const double hat = 0.15 * std::exp(-te * 80.0) * rng.gauss();
+            const float v = float(kick + hat + 0.01 * rng.gauss());
+            x.channel(0)[i] = x.channel(1)[i] = v;
+        }
+        const auto tp = estimateTempo(x);
+        REPORT("%.0f BPM pattern -> %.1f BPM, confidence %.2f", bpm, tp.bpm, tp.confidence);
+        // Half/double time is the same note-length grid for timing purposes.
+        const double err = std::min({ std::abs(tp.bpm - bpm), std::abs(2 * tp.bpm - bpm), std::abs(tp.bpm - 2 * bpm) });
+        CHECK_LE(err, 1.0);
+        CHECK(tp.reliable());
+    }
+    AudioBuffer noise(2, size_t(SR * 20.0), SR);
+    for (int c = 0; c < 2; ++c)
+        for (auto& v : noise.vec(c)) v = float(0.1 * rng.gauss());
+    const auto tn = estimateTempo(noise);
+    REPORT("white noise -> %.1f BPM, confidence %.2f", tn.bpm, tn.confidence);
+    CHECK(!tn.reliable());
+}
+
+TEST("tempo sync: compressor and limiter releases land on the note grid of the detected tempo")
+{
+    ts::Rng rng(5);
+    const double bpm = 128.0, beat = 60.0 / 128.0;
+    AudioBuffer x(2, size_t(SR * 16.0), SR);
+    for (size_t i = 0; i < x.numFrames(); ++i)
+    {
+        const double t = double(i) / SR, tb = std::fmod(t, beat), te = std::fmod(t, beat * 0.5);
+        const double kick = 0.5 * std::exp(-tb * 25.0) * std::sin(2 * kPi * (55 + 70 * std::exp(-tb * 40)) * tb);
+        const double pad = 0.05 * std::sin(2 * kPi * 220 * t) + 0.04 * std::sin(2 * kPi * 330 * t);
+        const float v = float(kick + pad + 0.12 * std::exp(-te * 70.0) * rng.gauss());
+        x.channel(0)[i] = v;
+        x.channel(1)[i] = float(v * 0.9 + 0.01 * rng.gauss());
+    }
+    UserControls uc;
+    ProcessResult r = run(x, "music.warm", uc);
+    const double rel = r.plan.settings.compressor.releaseMs, slow = r.plan.limiterSlowReleaseMs;
+    auto onGrid = [&](double ms) {
+        for (double m : { 0.125, 0.25, 0.5, 1.0, 2.0 })
+            if (std::abs(ms - 60000.0 / bpm * m) < 1e-6 || std::abs(ms - 30000.0 / bpm * m) < 1e-6 || std::abs(ms - 120000.0 / bpm * m) < 1e-6)
+                return true;
+        return false;
+    };
+    uc.tempoSync = false;
+    ProcessResult off = run(x, "music.warm", uc);
+    REPORT("tempo %.1f BPM: compressor release %.1f ms (preset %.1f), limiter sustained %.1f ms (preset %.1f)", r.analysis.tempo.bpm, rel,
+           off.plan.settings.compressor.releaseMs, slow, off.plan.limiterSlowReleaseMs);
+    CHECK(r.analysis.tempo.reliable());
+    CHECK(onGrid(rel));
+    CHECK(onGrid(slow));
+    CHECK(std::abs(rel - off.plan.settings.compressor.releaseMs) > 1.0); // actually moved onto the grid
+    CHECK_NEAR(off.plan.settings.compressor.releaseMs, findPreset("music.warm")->compStyle.releaseMs, 1e-9);
+    CHECK_LE(r.outputStats.truePeakDb, findPreset("music.warm")->ceilingDbTP + 0.1);
+}

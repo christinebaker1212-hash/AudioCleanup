@@ -465,6 +465,87 @@ ReferenceProfile analyzeReference(const AudioBuffer& b, const std::string& name)
     return r;
 }
 
+TempoInfo estimateTempo(const AudioBuffer& b)
+{
+    TempoInfo t;
+    const double sr = b.sampleRate;
+    const size_t maxFrames = std::min(b.numFrames(), size_t(sr * 120.0));
+    const int nfft = sr > 64000 ? 4096 : 2048;
+    const size_t hop = std::max<size_t>(1, size_t(std::lround(sr / 200.0)));
+    const double fps = sr / double(hop);
+    if (maxFrames < size_t(nfft) + hop * size_t(fps * 6.0)) return t; // need ~6 s
+    // Onset strength: half-wave rectified log-magnitude flux up to 8 kHz.
+    RealFft fft(nfft);
+    std::vector<float> win(static_cast<size_t>(nfft)), frame(static_cast<size_t>(nfft));
+    for (int i = 0; i < nfft; ++i) win[size_t(i)] = float(0.5 - 0.5 * std::cos(2.0 * kPi * i / nfft));
+    std::vector<std::complex<float>> X(size_t(nfft / 2 + 1));
+    const int kMax = std::min(nfft / 2, int(8000.0 * nfft / sr));
+    std::vector<float> prev(size_t(kMax + 1), 0.0f), cur(size_t(kMax + 1));
+    std::vector<double> onset;
+    for (size_t s = 0; s + size_t(nfft) <= maxFrames; s += hop)
+    {
+        for (int i = 0; i < nfft; ++i)
+        {
+            double m = 0;
+            for (int c = 0; c < b.numChannels(); ++c) m += b.channel(c)[s + size_t(i)];
+            frame[size_t(i)] = float(m / b.numChannels()) * win[size_t(i)];
+        }
+        fft.forward(frame.data(), X.data());
+        double flux = 0;
+        for (int k = 1; k <= kMax; ++k)
+        {
+            cur[size_t(k)] = std::log1p(1000.0f * std::abs(X[size_t(k)]) / float(nfft));
+            flux += std::max(0.0f, cur[size_t(k)] - prev[size_t(k)]);
+        }
+        std::swap(prev, cur);
+        onset.push_back(onset.empty() ? 0.0 : flux);
+    }
+    // Remove the local mean (0.5 s) and rectify.
+    const size_t n = onset.size();
+    std::vector<double> pre(n + 1, 0.0), o(n);
+    for (size_t i = 0; i < n; ++i) pre[i + 1] = pre[i] + onset[i];
+    const size_t half = size_t(fps * 0.25);
+    for (size_t i = 0; i < n; ++i)
+    {
+        const size_t a = i > half ? i - half : 0, e = std::min(n, i + half + 1);
+        o[i] = std::max(0.0, onset[i] - (pre[e] - pre[a]) / double(e - a));
+    }
+    // Autocovariance (mean removed) so a pulse-free signal scores ~0.
+    double mo = 0;
+    for (double v : o) mo += v;
+    mo /= double(n);
+    for (auto& v : o) v -= mo;
+    const size_t maxLag = std::min(n - 1, size_t(std::ceil(4.0 * 60.0 * fps / 60.0)) + 2);
+    std::vector<double> acf(maxLag + 1, 0.0);
+    for (size_t L = 0; L <= maxLag; ++L)
+    {
+        double sum = 0;
+        for (size_t i = L; i < n; ++i) sum += o[i] * o[i - L];
+        acf[L] = sum / double(n - L);
+    }
+    if (acf[0] <= 1e-12) return t;
+    auto at = [&](double lag) {
+        if (lag >= double(maxLag)) return 0.0;
+        const size_t i = size_t(lag);
+        const double f = lag - double(i);
+        return (acf[i] * (1 - f) + acf[i + 1] * f) / acf[0];
+    };
+    double bestScore = -1, bestBpm = 0;
+    for (double bpm = 60.0; bpm <= 200.0; bpm += 0.1)
+    {
+        const double lag = 60.0 * fps / bpm;
+        double sc = 0;
+        for (int m = 1; m <= 4; ++m) sc += at(lag * m) / m;
+        sc += 0.5 * at(lag * 0.5); // eighth-note support
+        const double oct = std::log2(bpm / 120.0);
+        sc *= std::exp(-0.5 * oct * oct);
+        if (sc > bestScore) { bestScore = sc; bestBpm = bpm; }
+    }
+    t.bpm = bestBpm;
+    t.confidence = clampv(at(60.0 * fps / bestBpm), 0.0, 1.0);
+    return t;
+}
+
 double shortTermCrestDb(const AudioBuffer& b)
 {
     const size_t blk = std::max<size_t>(16, size_t(b.sampleRate * 0.05));
@@ -676,6 +757,7 @@ AnalysisReport analyze(const AudioBuffer& b, Category cat, const Job& job)
     r.spectrum = spectrumInfo(b, r.noise);
     r.stereo = stereoInfo(b);
     r.transients = transientInfo(b, r.noise.levelDb, r.loudness);
+    if (cat == Category::Music) r.tempo = estimateTempo(b);
     throwIfCancelled(job);
 
     if (cat == Category::Voice && r.durationS > 0.3)
@@ -841,6 +923,12 @@ std::string describe(const AnalysisReport& r)
                   r.transients.attackMs, r.transients.decayMs, r.transients.onsetCount, r.transients.activeDurationS,
                   r.transients.peakToLoudnessDb);
     o << buf;
+    if (r.tempo.bpm > 0)
+    {
+        std::snprintf(buf, sizeof buf, "Tempo: %.1f BPM (confidence %.2f%s)\n", r.tempo.bpm, r.tempo.confidence,
+                      r.tempo.reliable() ? "" : ", no clear pulse");
+        o << buf;
+    }
     if (r.speech.analysed)
     {
         std::snprintf(buf, sizeof buf,

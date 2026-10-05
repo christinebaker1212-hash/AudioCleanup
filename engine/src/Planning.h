@@ -14,5 +14,8 @@ std::vector<double> referenceDeviation(const SpectrumInfo& src, const SpectrumIn
 /** Fit broad EQ bands to a deviation curve (bounded). */
 std::vector<EqBand> fitEqBands(const std::vector<double>& hz, const std::vector<double>& dev, double maxBoost, double maxCut, double sr,
                                Category cat, double minBellHz, int maxBells);
+/** Snap a release time to the nearest note length (1/32..1/2 note) at bpm when
+    within a factor of 1.6; returns ms unchanged otherwise. label gets e.g. "1/16 note at 124 BPM". */
+double snapToNote(double ms, double bpm, std::string* label = nullptr);
 void planDynamics(Plan& plan, const AnalysisReport& a, const PresetDef& p, const UserControls& uc, const AudioBuffer& x1);
 } // namespace ac

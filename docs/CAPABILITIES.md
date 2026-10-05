@@ -67,6 +67,8 @@ the algorithm named here.
 | Expander | Linked downward expander with hold, bounded range (never a hard gate) | Verified: transparent above threshold |
 | Transient shaper | Level-independent fast/slow envelope differences | Verified: transparent at 0 dB, block invariant |
 | Saturation | 4× linear-phase polyphase FIR oversampling (Kaiser, 64 taps/phase, integer latency), unity-small-signal-gain tanh with even-harmonic asymmetry, DC blocker | Verified: passband 0.0001 dB at 15 kHz; aliased 5th harmonic at −122 dB |
+| Tempo detection (music) | Log-magnitude spectral flux at 200 frames/s, mean-removed autocorrelation, 4-harmonic comb plus eighth-note support, broad prior at 120 BPM; confidence = normalised autocovariance at the beat lag | Verified: 92 and 128 BPM patterns exact; 174 BPM reported as 87 (half time, the same note grid); white noise confidence 0.01 (threshold 0.2). Real tracks are not independently cross-checked |
+| Tempo-synced release (music) | Compressor, multiband band and limiter sustained releases snap to the nearest note length (1/32–1/2 note) when within ×1.6 of the preset value; skipped without a clear pulse; `--no-tempo-sync` disables | Verified: at 128 BPM compressor 250 → 234.4 ms (1/8 note), limiter 480 → 468.8 ms (1/4 note) |
 | Stereo | M/S width, LR4 bass mono-isation (only when LF correlation < 0.2), voice balance correction | Verified: transparent at width 1 |
 
 ## Decision engine, presets, workflow
