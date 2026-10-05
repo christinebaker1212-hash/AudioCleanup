@@ -349,12 +349,19 @@ void planCleanupTone(Plan& plan, const AnalysisReport& a, const PresetDef& p, co
     // ------------------------------------------------------------- Declip
     {
         auto& sp = plan.stage(StageId::Declip);
-        S.declip.clipLevel = a.clipping.level;
-        S.declip.maxRunMs = voice ? 3.0 : 2.0;
-        param(sp, "Clip level", fmt("%.2f dBFS", gainToDb(a.clipping.level)));
+        // A polarity that is not clipped gets an unreachable level, so its peaks stay untouched.
+        S.declip.clipLevel = a.clipping.levelPos > 0 ? a.clipping.levelPos : 1e9;
+        S.declip.clipLevelNeg = a.clipping.levelNeg > 0 ? a.clipping.levelNeg : 1e9;
+        S.declip.maxRunMs = 10.0;
+        S.declip.method = DeclipMethod::Sparse;
+        auto lvl = [](double g) { return g > 0 ? fmt("%.2f dBFS", gainToDb(g)) : std::string("not clipped"); };
+        param(sp, "Clip level +", lvl(a.clipping.levelPos));
+        param(sp, "Clip level -", lvl(a.clipping.levelNeg));
+        param(sp, "Method", "A-SPADE sparse reconstruction (23 ms frames, 75 % overlap)");
         param(sp, "Max run", fmt("%.1f ms", S.declip.maxRunMs));
+        param(sp, "Max peak rebuild", fmt("+%.0f dB over the clip level", S.declip.maxBoostDb));
         decide(sp, a.clipping.likely,
-               a.clipping.likely ? fmt("%d clipped runs (%.3f%% of samples): AR reconstruction above the clip level.",
+               a.clipping.likely ? fmt("%d clipped runs (%.3f%% of samples): peaks rebuilt by sparse reconstruction above the clip level.",
                                        a.clipping.runs, a.clipping.clippedPercent)
                                  : fmt("No clipping detected (%d flat runs).", a.clipping.runs),
                uc);
@@ -823,6 +830,42 @@ void planCleanupTone(Plan& plan, const AnalysisReport& a, const PresetDef& p, co
                 }
             }
         }
+        // Clearly narrow mix (no reference): lift the side above 300 Hz. The mid
+        // is untouched, so the mono fold-down does not change; bass stays centred.
+        if (sp.available && !uc.reference && !voice && p.maxWidenDb > 0 && tn > 0 && a.stereo.isStereo && !a.stereo.dualMono &&
+            a.stereo.correlation > 0.0)
+        {
+            const auto sb = sideToMidByBand(in);
+            const auto& hz = a.spectrum.bandHz;
+            double sum = 0;
+            int cnt = 0;
+            for (size_t i = 0; i < std::min(sb.size(), hz.size()); ++i)
+                if (hz[i] >= 300 && hz[i] <= 12000 && sb[i] > -60) { sum += sb[i]; ++cnt; }
+            const double avg = cnt >= 6 ? sum / cnt : 0.0;
+            if (cnt >= 6 && avg < -16.0 && avg > -45.0)
+            {
+                const double g = std::min(p.maxWidenDb, 0.5 * (-12.0 - avg)) * std::min(tn, 1.0);
+                if (g >= 0.5)
+                {
+                    s.sideEq.push_back({ SvfType::HighShelf, 300.0, 0.6, g, true });
+                    on = true;
+                    param(sp, "Widen", fmt("side +%.1f dB above 300 Hz", g));
+                    why = fmt("Narrow image: side/mid %.1f dB above 300 Hz (finished mixes are typically -6 to -14) -> side +%.1f dB "
+                              "above 300 Hz (mono-compatible, bass stays centred).",
+                              avg, g);
+                }
+            }
+        }
+        // Anti-phase channels (one side miked or wired in reverse) cancel in mono.
+        if (sp.available && a.stereo.isStereo && a.stereo.correlation < -0.5 && a.stereo.lowCorrelation < -0.3)
+        {
+            s.invertRight = true;
+            s.monoBelowHz = 0.0; // the low end correlates once the polarity is fixed
+            on = true;
+            why = fmt("Channels are in opposite polarity (correlation %.2f, %.2f below 150 Hz): the mix would cancel in mono -> "
+                      "right channel polarity inverted.",
+                      a.stereo.correlation, a.stereo.lowCorrelation);
+        }
         if (sp.available && p.sideLowCutHz > 0 && !a.stereo.dualMono && a.stereo.isStereo && tn > 0 && s.monoBelowHz <= 0)
         {
             s.sideLowCutHz = p.sideLowCutHz;
@@ -839,6 +882,7 @@ void planCleanupTone(Plan& plan, const AnalysisReport& a, const PresetDef& p, co
         param(sp, "Mono below", s.monoBelowHz > 0 ? fmt("%.0f Hz (LR4)", s.monoBelowHz) : "off");
         param(sp, "Balance", fmt("%+.1f dB", s.balanceDb));
         param(sp, "Side low-cut", s.sideLowCutHz > 0 ? fmt("%.0f Hz, 12 dB/oct", s.sideLowCutHz) : "off");
+        if (s.invertRight) param(sp, "Polarity", "right channel inverted");
         decide(sp, on, sp.available ? why : "Mono or multichannel source.", uc);
     }
 }

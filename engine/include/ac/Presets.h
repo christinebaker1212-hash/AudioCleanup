@@ -72,6 +72,7 @@ struct PresetDef
     double harshnessRangeDb = 0.0;     ///< dynamic EQ 2-5 kHz (0 = off)
     double resonanceDepthDb = 0.0;     ///< dynamic resonance suppression depth (0 = off unless forced)
     double sideLowCutHz = 0.0;         ///< music: gentle side-channel high-pass (0 = off)
+    double maxWidenDb = 0.0;           ///< music: side lift above 300 Hz for clearly narrow mixes (0 = off)
     double boomRangeDb = 0.0;          ///< dynamic low shelf (0 = off)
     double saturationDriveDb = 0.0;    ///< 0 = off
     double saturationAsymmetry = 0.0;

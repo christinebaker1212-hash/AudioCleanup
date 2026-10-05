@@ -8,6 +8,8 @@
 #include <ac/Fft.h>
 #include <ac/Restoration.h>
 
+#include <chrono>
+
 using namespace ac;
 
 namespace {
@@ -232,6 +234,66 @@ TEST("clicks: detection, AR repair accuracy, no false repairs on speech/transien
         cr2.processOffline(o, {});
         REPORT("clean %s: %d repairs (%d onsets protected)", name, cr2.repairedCount(), cr2.protectedCount());
         CHECK_LE(cr2.repairedCount(), 2);
+    }
+}
+
+TEST("declip: sparse (A-SPADE) rebuilds heavy clipping that AR cannot")
+{
+    // Clip speech- and music-like signals at increasing depth (threshold relative to
+    // the peak) and measure the error against the clean signal over clipped samples.
+    struct Sig { const char* name; AudioBuffer x; };
+    std::vector<Sig> sigs;
+    sigs.push_back({ "speech", ts::pseudoSpeech(16000, 6.0, 5, -18) });
+    {
+        AudioBuffer m = ts::pseudoMusic(44100, 6.0, 9, -16);
+        AudioBuffer mono(1, m.numFrames(), m.sampleRate);
+        for (size_t i = 0; i < m.numFrames(); ++i) mono.channel(0)[i] = 0.5f * (m.channel(0)[i] + m.channel(1)[i]);
+        sigs.push_back({ "music", mono });
+    }
+    for (auto& sg : sigs)
+    {
+        float peak = 0;
+        for (float v : sg.x.vec(0)) peak = std::max(peak, std::abs(v));
+        for (double depthDb : { 3.0, 6.0, 10.0, 14.0 })
+        {
+            const float th = float(peak * dbToGain(-depthDb));
+            AudioBuffer clip = sg.x;
+            size_t nClip = 0;
+            for (auto& v : clip.vec(0))
+                if (std::abs(v) >= th) { v = v > 0 ? th : -th; ++nClip; }
+            double sdr[3] = {};
+            double secs = 0;
+            for (int method = 0; method < 2; ++method)
+            {
+                DeclipSettings ds;
+                ds.clipLevel = th;
+                ds.maxRunMs = method == 0 ? 3.0 : 20.0;
+                ds.method = method == 0 ? DeclipMethod::AR : DeclipMethod::Sparse;
+                Declipper dc(ds);
+                AudioBuffer out = clip;
+                dc.prepare(sg.x.sampleRate, 1);
+                const auto t0 = std::chrono::steady_clock::now();
+                dc.processOffline(out, {});
+                if (method == 1) secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+                double e = 0, s = 0, e0 = 0;
+                for (size_t i = 0; i < out.numFrames(); ++i)
+                {
+                    const double r = sg.x.channel(0)[i];
+                    s += r * r;
+                    e += std::pow(out.channel(0)[i] - r, 2);
+                    e0 += std::pow(clip.channel(0)[i] - r, 2);
+                }
+                sdr[0] = 10 * std::log10(s / e0);
+                sdr[method + 1] = 10 * std::log10(s / e);
+            }
+            REPORT("%-6s clipped %4.1f dB below peak (%5.2f%% samples): SDR %5.1f dB -> AR %5.1f dB, sparse %5.1f dB (%.2f s)", sg.name,
+                   depthDb, 100.0 * double(nClip) / double(clip.numFrames()), sdr[0], sdr[1], sdr[2], secs);
+            CHECK_GE(sdr[2], sdr[0] + 3.0); // always a clear improvement
+            // Better than AR once clipping is heavy. (This synthetic music is a sum of
+            // steady partials, AR's ideal case; on real recordings sparse leads from
+            // 6 dB on: docs/CAPABILITIES.md.)
+            if (depthDb >= (sg.name[0] == 's' ? 6.0 : 10.0)) CHECK_GE(sdr[2], sdr[1]);
+        }
     }
 }
 

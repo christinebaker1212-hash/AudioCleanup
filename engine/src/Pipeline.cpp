@@ -271,7 +271,9 @@ ProcessResult process(const ProcessRequest& req, const Job& job)
     };
 
     // ------------------------------------------------------------ Cleanup
-    const StageId cleanup[] = { StageId::Filter, StageId::Declip, StageId::Declick, StageId::Dehum, StageId::Denoise,
+    // De-clip sees the raw samples: filtering or DC removal first would bend the
+    // flat plateaus away from the measured clip level.
+    const StageId cleanup[] = { StageId::Declip, StageId::Filter, StageId::Declick, StageId::Dehum, StageId::Denoise,
                                 StageId::Neural, StageId::Dereverb, StageId::Plosive, StageId::DeEss };
     double prog = 0.2;
     for (StageId id : cleanup)

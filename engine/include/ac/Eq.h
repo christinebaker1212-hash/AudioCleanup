@@ -133,9 +133,10 @@ struct StereoSettings
     double balanceDb = 0.0;      ///< + = raise right / lower left (split evenly)
     std::vector<EqBand> sideEq;  ///< EQ applied to the side (S) signal only (width by frequency)
     double sideLowCutHz = 0.0;   ///< 0 = off; 12 dB/oct high-pass on the side signal (tighter low end)
+    bool invertRight = false;    ///< polarity-invert the right channel (anti-phase recordings)
 };
 
-/** M/S width, bass mono-isation, side EQ (width by frequency), side low-cut and balance correction (stereo only). */
+/** Polarity fix, M/S width, bass mono-isation, side EQ (width by frequency), side low-cut and balance correction (stereo only). */
 class StereoProcessor : public Processor
 {
 public:

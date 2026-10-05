@@ -24,9 +24,11 @@ struct HumInfo
 
 struct ClippingInfo
 {
-    int runs = 0;                ///< flat runs of >= 3 samples at the max level
+    int runs = 0;                ///< flat runs of >= 3 samples at a polarity's extreme level
     double clippedPercent = 0.0;
-    double level = 1.0;          ///< plateau level (linear)
+    double level = 1.0;          ///< plateau level (linear; the larger of the two polarities)
+    double levelPos = 0.0;       ///< positive plateau level, 0 if that polarity is not clipped
+    double levelNeg = 0.0;       ///< negative plateau magnitude, 0 if that polarity is not clipped
     bool likely = false;
 };
 

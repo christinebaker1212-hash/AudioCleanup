@@ -263,6 +263,7 @@ std::vector<PresetDef> build()
     // =============================== MUSIC ===============================
     PresetDef mu;
     mu.category = Category::Music;
+    mu.maxWidenDb = 3.0;
     mu.denoiseDefault = false;
     mu.hpfAlways = false;
     mu.hpfMaxHz = 18.0;
@@ -283,6 +284,7 @@ std::vector<PresetDef> build()
                         "true-peak limiting to -14 LUFS.";
         p.targetLufs = -14.0; p.ceilingDbTP = -1.0; p.maxLimiterGrDb = 3.0;
         p.toneStrength = 0.3; p.maxEqBoostDb = 1.5; p.maxEqCutDb = 2.0;
+        p.maxWidenDb = 1.5;
         p.compTargetGrDb = 1.5;
         v.push_back(p);
     }
@@ -348,6 +350,7 @@ std::vector<PresetDef> build()
                         "compression, peak-safe delivery at -16 LUFS.";
         p.targetLufs = -16.0; p.ceilingDbTP = -1.0; p.maxLimiterGrDb = 1.5;
         p.toneStrength = 0.25; p.maxEqBoostDb = 1.0; p.maxEqCutDb = 1.5;
+        p.maxWidenDb = 1.5;
         p.compStyle = comp(1.3, 50.0, 400.0, 12.0, DetectorMode::Rms, 50.0, 60.0);
         p.compTargetGrDb = 0.0;
         p.maxHighBoostDb = 1.0;
@@ -486,7 +489,7 @@ struct FlatJson
     X(targetNoiseFloorDb) X(minSnrForNoNr) X(denoiseStrength) X(maxActiveLossDb) X(neuralBelowSnrDb) X(neuralMix)     \
     X(sibilanceTargetDb) X(maxDeEssDb) X(maxPlosiveDb) X(hpfMaxHz) X(clickThreshold) X(clickMinPerMinute)             \
     X(humMaxDepthDb) X(dereverbAutoAboveRt60) X(dereverbMaxDb) X(maxNoiseGateDb) X(toneStrength) X(maxEqBoostDb)      \
-    X(maxEqCutDb) X(maxHighBoostDb) X(maxLowCutDb) X(harshnessRangeDb) X(resonanceDepthDb) X(sideLowCutHz) X(boomRangeDb) X(saturationDriveDb) X(saturationAsymmetry) X(saturationMix)     \
+    X(maxEqCutDb) X(maxHighBoostDb) X(maxLowCutDb) X(harshnessRangeDb) X(resonanceDepthDb) X(sideLowCutHz) X(maxWidenDb) X(boomRangeDb) X(saturationDriveDb) X(saturationAsymmetry) X(saturationMix)     \
     X(levelerRangeDb) X(levelerStrength) X(transientAttackDb) X(transientSustainDb) X(compTargetGrDb)                  \
     X(mbXoverLowHz) X(mbXoverHighHz)
 } // namespace

@@ -204,7 +204,7 @@ void StereoProcessor::prepare(double sr, int ch)
 void StereoProcessor::process(float* const* ch, int nch, int n)
 {
     if (nch != 2) return;
-    const double gl = dbToGain(-s_.balanceDb / 2.0), gr = dbToGain(s_.balanceDb / 2.0);
+    const double gl = dbToGain(-s_.balanceDb / 2.0), gr = dbToGain(s_.balanceDb / 2.0) * (s_.invertRight ? -1.0 : 1.0);
     for (int i = 0; i < n; ++i)
     {
         const double l = ch[0][i] * gl, r = ch[1][i] * gr;

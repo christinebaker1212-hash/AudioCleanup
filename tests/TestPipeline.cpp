@@ -606,3 +606,87 @@ TEST("mid/side: width by frequency moves to the reference; side low-cut leaves t
     CHECK_GE(cut, 15.0);
     CHECK_LE(midErr, 1e-6);
 }
+
+TEST("clipping: detected per polarity at low level, rebuilt before filtering")
+{
+    // A recording clipped on its positive half only, then turned down to -26 dBFS
+    // peak (a clipped take normalised later): previously skipped below -20 dBFS.
+    AudioBuffer clean = ts::pseudoSpeech(SR, 6.0, 41, -14);
+    std::vector<float> pos;
+    for (float v : clean.vec(0))
+        if (v > 0) pos.push_back(v);
+    std::sort(pos.begin(), pos.end());
+    const float th = pos[size_t(0.96 * double(pos.size()))]; // ~2 % of all samples clipped
+    AudioBuffer clip = clean;
+    for (auto& v : clip.vec(0)) v = std::min(v, th);
+    const float g = float(dbToGain(-26.0)) / th;
+    clip.applyGain(g);
+    clean.applyGain(g);
+    const auto a = analyze(clip, Category::Voice);
+    REPORT("runs %d, +%.2f / -%.2f dBFS", a.clipping.runs, a.clipping.levelPos > 0 ? gainToDb(a.clipping.levelPos) : -999.0,
+           a.clipping.levelNeg > 0 ? gainToDb(a.clipping.levelNeg) : -999.0);
+    CHECK(a.clipping.likely);
+    CHECK_NEAR(gainToDb(a.clipping.levelPos), -26.0, 0.05);
+    CHECK(a.clipping.levelNeg == 0.0); // the negative half is not clipped
+    // Through the whole voice chain the de-clipper runs on the raw samples.
+    ProcessRequest rq;
+    rq.input = &clip;
+    rq.preset = findPreset("voice.natural");
+    rq.category = Category::Voice;
+    ProcessResult r = process(rq, {});
+    CHECK(r.plan.stage(StageId::Declip).enabled);
+    bool rebuilt = false;
+    for (const auto& m : r.metrics)
+        if (m.id == StageId::Declip) rebuilt = true;
+    CHECK(rebuilt);
+}
+
+TEST("stereo: anti-phase channels are fixed, narrow mixes widened (mono-compatible)")
+{
+    // Anti-phase: one channel inverted cancels in mono.
+    AudioBuffer m = ts::pseudoMusic(SR, 8.0, 52, -20);
+    AudioBuffer anti = m;
+    for (auto& v : anti.vec(1)) v = -v;
+    auto foldDb = [](const AudioBuffer& b) {
+        double s = 0, e = 0;
+        for (size_t i = 0; i < b.numFrames(); ++i)
+        {
+            const double mid = 0.5 * (b.channel(0)[i] + b.channel(1)[i]);
+            s += mid * mid;
+            e += 0.5 * (double(b.channel(0)[i]) * b.channel(0)[i] + double(b.channel(1)[i]) * b.channel(1)[i]);
+        }
+        return powerToDb(s / e);
+    };
+    ProcessResult r = run(anti, "music.transparent");
+    REPORT("anti-phase: mono fold-down %.1f dB -> %.1f dB (normal mix %.1f dB)", foldDb(anti), foldDb(r.output), foldDb(m));
+    CHECK(r.plan.settings.stereo.invertRight);
+    CHECK_GE(foldDb(r.output), foldDb(m) - 1.0);
+    // A normal mix is never inverted.
+    CHECK(!run(m, "music.transparent").plan.settings.stereo.invertRight);
+
+    // Narrow: side scaled down 20 dB.
+    AudioBuffer narrow = m;
+    for (size_t i = 0; i < narrow.numFrames(); ++i)
+    {
+        const double mid = 0.5 * (narrow.channel(0)[i] + narrow.channel(1)[i]), side = 0.05 * (narrow.channel(0)[i] - narrow.channel(1)[i]);
+        narrow.channel(0)[i] = float(mid + side);
+        narrow.channel(1)[i] = float(mid - side);
+    }
+    auto avgSm = [](const AudioBuffer& b) {
+        const auto sb = sideToMidByBand(b);
+        double s = 0;
+        int c = 0;
+        const auto hz = analyze(b, Category::Music).spectrum.bandHz;
+        for (size_t i = 0; i < std::min(sb.size(), hz.size()); ++i)
+            if (hz[i] >= 300 && hz[i] <= 12000 && sb[i] > -60) { s += sb[i]; ++c; }
+        return c ? s / c : 0.0;
+    };
+    ProcessResult w = run(narrow, "music.warm");
+    REPORT("narrow: side/mid above 300 Hz %.1f dB -> %.1f dB (original %.1f)", avgSm(narrow), avgSm(w.output), avgSm(m));
+    CHECK_GE(avgSm(w.output), avgSm(narrow) + 2.0);
+    CHECK_LE(avgSm(w.output), avgSm(narrow) + 3.5); // bounded (3 dB lift)
+    // An ordinary stereo mix is left as it is.
+    bool widened = false;
+    for (const auto& b : run(m, "music.warm").plan.settings.stereo.sideEq) widened |= b.type == SvfType::HighShelf;
+    CHECK(!widened);
+}

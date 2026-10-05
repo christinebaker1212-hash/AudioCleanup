@@ -51,7 +51,7 @@ the algorithm named here.
 | Denoise artifact control | Measures loudest-frame energy loss after denoise and re-renders gentler if it exceeds the preset bound | Implemented, logged in the decision log |
 | Neural speech enhancer | RNNoise 0.2 (bundled weights), 48 kHz internal via r8brain, attenuation-bounded wet/dry | Verified: 0-sample alignment at 48 and 44.1 kHz; 27 dB gap-noise reduction. Speech only (not offered for SFX/music) |
 | De-click | AR(p) forward/backward residual detection, periodicity test (rejects glottal/periodic excitation), robust onset protection, edge refinement, least-squares AR interpolation; category-specific criteria (music: ≤ 0.5 ms, strong, non-onset) | Verified: 29/30 inserted clicks restored to −68…−150 dB error (the 30th sits 2 ms after a drum onset and is deliberately left); 0–1 repairs on clean speech/impacts; on real music, false detections cut from 42/min to 0–2.6/min on 5 of 6 tracks (the remaining one has genuine glitches) |
-| De-clip | Flat-run detection at the plateau level; constrained AR reconstruction (active set keeps samples beyond the clip level) | Verified: clipping error −29.7 → −71.1 dB |
+| De-clip | Detection: flat runs at each polarity's extreme, judged separately (asymmetric clipping) and down to −50 dBFS (clipped takes turned down later). Reconstruction: A-SPADE sparse declipping (Kitić et al. 2015; Záviška et al. 2019): Hann-windowed 23 ms frames, 75 % overlap, 2×-redundant DFT, hard-thresholding with growing sparsity alternated with projection onto the consistent set (reliable samples exact, clipped samples beyond the clip level); runs up to 10 ms, peaks bounded to +12 dB; multithreaded. Runs first in the chain, on the raw samples | Verified: two-sine test −29.7 → −53.1 dB error. SDR on real recordings clipped 6 / 10 / 14 dB below peak: solo trumpet 15.6 / 9.5 / 6.0 → **50.4 / 34.0 / 25.3 dB** (previous AR method 24.9 / 13.6 / 8.6); string orchestra 28.5 / 18.2 / 11.3 → 38.6 / 28.3 / 20.6; ragtime piano 24.7 / 14.7 / 9.1 → 40.1 / 27.0 / 20.3; drum & bass 23.4 / 14.0 / 8.7 → 24.6 / 18.5 / 14.9; speech 18.1 / 11.1 / 6.9 → 22.2 / 19.9 / 14.8. At 3 dB both methods exceed 28 dB SDR. A positive-only clip at −26 dBFS is detected at the exact level with the negative half untouched |
 | Plosive control | Sub-F0 / voice-band (300 Hz–3 kHz) ratio and LF onset both relative to running baselines; complementary low-band attenuation only during bursts (bit-transparent when idle) | Verified: synthetic pops detected 5/5, LF reduced 7 dB; 0 events on clean speech |
 | De-esser | Sibilance-to-voice ratio detector (level-independent), thresholds from the measured ratio distribution, per-sample-modulated SVF shelf or bell with lookahead | Verified: sibilant bursts −6 dB, voiced passages ±0.02 dB |
 | De-reverb | Late-reverb PSD prediction (Lebart / Habets) from blind RT60, bounded LSA gain | Verified: tail in gaps −8 dB, active level −1 dB. RT60 estimate is coarse (0.8 s room read as 1.28 s); treat as approximate |
@@ -72,7 +72,7 @@ the algorithm named here.
 | Saturation | 4× linear-phase polyphase FIR oversampling (Kaiser, 64 taps/phase, integer latency), unity-small-signal-gain tanh with even-harmonic asymmetry, DC blocker | Verified: passband 0.0001 dB at 15 kHz; aliased 5th harmonic at −122 dB |
 | Tempo detection (music) | Log-magnitude spectral flux at 200 frames/s, mean-removed autocorrelation, 4-harmonic comb plus eighth-note support, broad prior at 120 BPM; confidence = normalised autocovariance at the beat lag | Verified: 92 and 128 BPM patterns exact; 174 BPM reported as 87 (half time, the same note grid); white noise confidence 0.01 (threshold 0.2). Real tracks are not independently cross-checked |
 | Tempo-synced release (music) | Compressor, multiband band and limiter sustained releases snap to the nearest note length (1/32–1/2 note) when within ×1.6 of the preset value; skipped without a clear pulse; `--no-tempo-sync` disables | Verified: at 128 BPM compressor 250 → 234.4 ms (1/8 note), limiter 480 → 468.8 ms (1/4 note) |
-| Stereo | M/S width, LR4 bass mono-isation (only when LF correlation < 0.2), voice balance correction, side-only EQ (width by frequency) and side low-cut (12 dB/oct; Warm 40 Hz, Punchy 60 Hz, Loud 80 Hz) | Verified: transparent at width 1; side low-cut −17.1 dB at 30 Hz (theory 17.1) with the mid unchanged (max error 3e-8) |
+| Stereo | M/S width, LR4 bass mono-isation (only when LF correlation < 0.2), voice balance correction, side-only EQ (width by frequency) and side low-cut (12 dB/oct; Warm 40 Hz, Punchy 60 Hz, Loud 80 Hz). Polarity fix: channels in opposite polarity (correlation < −0.5, also below 150 Hz) get the right channel inverted. Narrow-mix widening (music, no reference): side/mid above 300 Hz below −16 dB (finished mixes measure −2 to −18) lifts the side above 300 Hz by half the shortfall to −12 dB, at most 3 dB (1.5 dB Transparent/Dynamic); the mid, and so the mono fold-down, is untouched | Verified: transparent at width 1; side low-cut −17.1 dB at 30 Hz (theory 17.1) with the mid unchanged (max error 3e-8); anti-phase mix mono fold-down −16.1 → −0.1 dB, never triggered on a normal mix; narrow mix −30.1 → −27.2 dB side/mid, ordinary stereo left alone |
 
 ## Decision engine, presets, workflow
 
@@ -107,8 +107,17 @@ the algorithm named here.
 - **RT60 estimation** is blind and coarse; de-reverb strength is bounded to compensate.
 - **Hum** harmonics masked by programme are left in place by design: depth never exceeds the
   measured prominence.
-- **Neural enhancer** is RNNoise (small, fast, speech-only). Heavier models such as DeepFilterNet
-  are not bundled.
+- **Neural enhancer** is RNNoise (small, fast, speech-only). DeepFilterNet3 (via ONNX Runtime) was
+  integrated and measured on the same degraded-speech set (stationary noise, room, hum, phone band,
+  clipping, babble, clatter, café): in this chain it matched RNNoise on DNSMOS (e.g. babble 1.74 vs
+  1.75, café 2.02 vs 1.96) but cost intelligibility (babble STOI 0.627 vs 0.707), so it was not adopted.
+- **Automatic EQ cannot tell a defect from a choice.** Finished commercial tracks deviate 10-50 dB from
+  any single target curve at the extremes (solo trumpet, dark piano recordings), and stronger or
+  trend-relative correction moved finished masters 1.5-2.6 dB rms away from themselves for a
+  0.2-0.7 dB gain on deliberately damaged mixes. Tonal correction therefore stays deliberately
+  partial; use **Match a reference** to steer it toward a sound you choose.
+- **Hiss in music** is not reduced by default: the quietest frames of music are music, so the noise
+  floor cannot be measured reliably without a dedicated high-band hiss detector.
 - **Windows build:** produced by GitHub Actions (MSVC, windows-2022). The full validation suite
   passes there. The Windows GUI has not been operated interactively; the GUI was exercised
   headless on Linux (Xvfb) through its scripting options, with screenshots in `docs/screenshots`.

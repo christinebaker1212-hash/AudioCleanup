@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <filesystem>
 
 namespace af {
 
@@ -514,6 +515,17 @@ bool saveAudio(const std::string& path, const ac::AudioBuffer& b, const ExportOp
 {
     juce::File f(juce::String::fromUTF8(path.c_str()));
     f.getParentDirectory().createDirectory();
+    // Only ever replace a regular file: never a device, pipe or directory
+    // (e.g. /dev/null given as the output path).
+    {
+        std::error_code ec;
+        const auto st = std::filesystem::status(std::filesystem::path(std::u8string(path.begin(), path.end())), ec);
+        if (!ec && std::filesystem::exists(st) && !std::filesystem::is_regular_file(st))
+        {
+            error = "Not a regular file, refusing to overwrite: " + path;
+            return false;
+        }
+    }
     if (f.existsAsFile() && !f.deleteFile())
     {
         error = "Cannot overwrite " + path;

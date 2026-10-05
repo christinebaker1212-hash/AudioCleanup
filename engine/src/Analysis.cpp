@@ -9,6 +9,15 @@
 
 namespace ac {
 
+namespace {
+std::string fmtDb(double g)
+{
+    char b[32];
+    std::snprintf(b, sizeof b, "%.2f", gainToDb(g));
+    return b;
+}
+} // namespace
+
 const char* categoryName(Category c)
 {
     switch (c)
@@ -709,28 +718,52 @@ AnalysisReport analyze(const AudioBuffer& b, Category cat, const Job& job)
     }
     if (r.veryShort) r.notes.push_back("Very short clip (< 400 ms): integrated loudness is undefined; peak/energy metrics are used.");
 
-    // Clipping: flat runs at the absolute maximum.
-    for (int c = 0; c < b.numChannels(); ++c)
+    // Clipping: flat runs at each polarity's extreme. Each polarity is judged on
+    // its own (converters and preamps often clip asymmetrically) and at any level
+    // down to -50 dBFS, since clipped recordings are often turned down afterwards.
     {
-        const auto& x = b.vec(c);
-        float m = 0;
-        for (float v : x) m = std::max(m, std::abs(v));
-        if (m < 0.1f) continue;
-        const float thr = m * 0.99999f;
-        size_t i = 0, clipped = 0;
-        while (i < x.size())
+        int runsPos = 0, runsNeg = 0;
+        size_t clipped = 0, total = 0;
+        double maxPos = 0, maxNeg = 0;
+        for (int c = 0; c < b.numChannels(); ++c)
         {
-            if (std::abs(x[i]) < thr) { ++i; continue; }
-            size_t j = i;
-            while (j < x.size() && std::abs(x[j]) >= thr && (x[j] > 0) == (x[i] > 0)) ++j;
-            if (j - i >= 3) { ++r.clipping.runs; clipped += j - i; }
-            i = j;
+            const auto& x = b.vec(c);
+            total += x.size();
+            float hiV = 0, loV = 0;
+            for (float v : x)
+            {
+                hiV = std::max(hiV, v);
+                loV = std::min(loV, v);
+            }
+            for (int pol = 0; pol < 2; ++pol)
+            {
+                const float ext = pol == 0 ? hiV : -loV;
+                if (ext < 0.003f) continue;
+                const float thr = ext * 0.99999f;
+                int runs = 0;
+                size_t i = 0;
+                while (i < x.size())
+                {
+                    const float v = pol == 0 ? x[i] : -x[i];
+                    if (v < thr) { ++i; continue; }
+                    size_t j = i;
+                    while (j < x.size() && (pol == 0 ? x[j] : -x[j]) >= thr) ++j;
+                    if (j - i >= 3) { ++runs; clipped += j - i; }
+                    i = j;
+                }
+                (pol == 0 ? runsPos : runsNeg) += runs;
+                if (runs > 0) (pol == 0 ? maxPos : maxNeg) = std::max(pol == 0 ? maxPos : maxNeg, double(ext));
+            }
         }
-        r.clipping.level = std::max(r.clipping.level == 1.0 ? 0.0 : r.clipping.level, double(m));
-        r.clipping.clippedPercent += 100.0 * double(clipped) / double(x.size() * size_t(b.numChannels()));
+        const double minutes = std::max(r.durationS / 60.0, 1.0 / 60.0);
+        auto clippedSide = [&](int runs) { return runs >= 3 && runs / minutes >= 2.0; };
+        r.clipping.runs = runsPos + runsNeg;
+        r.clipping.clippedPercent = total ? 100.0 * double(clipped) / double(total) : 0.0;
+        r.clipping.levelPos = clippedSide(runsPos) ? maxPos : 0.0;
+        r.clipping.levelNeg = clippedSide(runsNeg) ? maxNeg : 0.0;
+        r.clipping.likely = r.clipping.levelPos > 0.0 || r.clipping.levelNeg > 0.0;
+        r.clipping.level = r.clipping.likely ? std::max(r.clipping.levelPos, r.clipping.levelNeg) : 1.0;
     }
-    if (r.clipping.level == 0.0) r.clipping.level = 1.0;
-    r.clipping.likely = r.clipping.runs >= 3 && r.clipping.runs / std::max(r.durationS / 60.0, 1.0 / 60.0) >= 2.0;
     throwIfCancelled(job);
 
     job.report(0.1, "Noise profile");
@@ -880,8 +913,9 @@ AnalysisReport analyze(const AudioBuffer& b, Category cat, const Job& job)
     char buf[256];
     if (r.clipping.likely)
     {
-        std::snprintf(buf, sizeof buf, "Clipping: %d flat runs (%.3f%% of samples) at %.2f dBFS.", r.clipping.runs,
-                      r.clipping.clippedPercent, gainToDb(r.clipping.level));
+        std::snprintf(buf, sizeof buf, "Clipping: %d flat runs (%.3f%% of samples) at %s / %s dBFS (+/-).", r.clipping.runs,
+                      r.clipping.clippedPercent, r.clipping.levelPos > 0 ? fmtDb(r.clipping.levelPos).c_str() : "none",
+                      r.clipping.levelNeg > 0 ? fmtDb(r.clipping.levelNeg).c_str() : "none");
         r.notes.push_back(buf);
     }
     if (r.hum.detected)

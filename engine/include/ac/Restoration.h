@@ -248,15 +248,33 @@ private:
     int repaired_ = 0, protected_ = 0;
 };
 
-struct DeclipSettings
+enum class DeclipMethod
 {
-    double clipLevel = 0.99;     ///< absolute sample level treated as clipped
-    double maxRunMs = 2.0;       ///< longer flat runs are left (cannot be credibly rebuilt)
-    int arOrder = 0;
+    Sparse, ///< A-SPADE: consistent sparse reconstruction, handles long runs (default)
+    AR      ///< least-squares AR interpolation per run (short runs only)
 };
 
-/** Reconstructs clipped runs by AR interpolation constrained to exceed the
-    clip level with the clipped polarity (active-set iteration). */
+struct DeclipSettings
+{
+    double clipLevel = 0.99;     ///< positive clip level (absolute sample value)
+    double clipLevelNeg = 0.0;   ///< negative clip level magnitude; 0 = same as clipLevel
+    double maxRunMs = 2.0;       ///< longer flat runs are left (cannot be credibly rebuilt)
+    double maxBoostDb = 12.0;    ///< reconstructed peaks are bounded to this much over the clip level
+    DeclipMethod method = DeclipMethod::Sparse;
+    int arOrder = 0;
+    int threads = 0;             ///< worker threads for the sparse method (0 = hardware concurrency)
+};
+
+/** Rebuilds clipped peaks. Every reconstructed sample stays beyond the clip
+    level with the clipped polarity, and unclipped samples are never changed.
+
+    Sparse (default): A-SPADE (Kitic, Bertin, Gribonval 2015; Zaviska et al.
+    2019). Each ~23 ms frame (75 % overlap, 2x-redundant DFT) alternates
+    between the k largest spectral coefficients and the set of signals that
+    match the reliable samples and exceed the clip level where clipped; k
+    grows until both agree. Frames are rectangular during the iteration and
+    overlap-added with a Hann window, so reliable samples stay exact.
+    AR: least-squares AR interpolation with an active set, per run. */
 class Declipper : public Processor
 {
 public:
@@ -268,6 +286,8 @@ public:
     int repairedRuns() const { return repaired_; }
 
 private:
+    void processAr(std::vector<double>& x, double hi, double lo, int maxRun);
+    void processSparse(std::vector<double>& x, double hi, double lo, int maxRun, const Job& job);
     DeclipSettings s_;
     double sr_ = 48000;
     int repaired_ = 0;
