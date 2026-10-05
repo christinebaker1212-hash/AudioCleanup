@@ -1,6 +1,19 @@
-# AudioFinisher v0.1.0
+# AudioFinisher v0.1.1
 
-First release. Windows x64 desktop app for one-click restoration, mixing and
+## Changes since v0.1.0
+
+- **Display scaling:** the window now fits the screen at any Windows scaling
+  (125 %, 150 %...). The right-hand panel scrolls when the window is short,
+  the toolbar wraps on narrow windows, and a new **Interface size** setting
+  (70-120 %, bottom of the right panel) shrinks or enlarges the whole UI on
+  top of Windows scaling.
+- **More formats:** imports Ogg Vorbis and MP3 (bundled decoders, nothing to
+  install) and exports Ogg Vorbis (~256 kbps). MP3 decoding keeps the
+  encoder's start padding (a few ms of leading silence).
+
+---
+
+v0.1.0 was the first release. Windows x64 desktop app for one-click restoration, mixing and
 mastering of voice, sound effects and music. All processing is built in:
 no plug-ins, DAW or cloud needed.
 
