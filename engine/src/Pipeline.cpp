@@ -879,19 +879,21 @@ ProcessResult process(const ProcessRequest& req, const Job& job)
             const double want = start + (F.bodyDb - start) * amt;
             double cur = start, bestErr = std::abs(want - start);
             TransientSettings best = FS.transient;
+            // Secant steps: how far the body moves per dB of sustain depends on
+            // the material (little on short hits whose body is mostly effect
+            // tail), so each step uses the response measured on the last one.
+            double slope = 1.0;
             for (int it = 0; it < 8 && bestErr > 0.75; ++it)
             {
-                const double err = want - cur;
-                const TransientSettings before = FS.transient;
-                FS.transient.sustainDb = clampv(FS.transient.sustainDb + err, -15.0, 15.0);
-                if (std::abs(FS.transient.sustainDb - before.sustainDb) < 0.1) break;
+                const double err = want - cur, prev = FS.transient.sustainDb;
+                FS.transient.sustainDb = clampv(prev + err / slope, -15.0, 15.0);
+                if (std::abs(FS.transient.sustainDb - prev) < 0.1) break; // at the bound
                 useTrans = true;
                 const double now = measure();
-                if (now >= 0 || std::abs(want - now) > std::abs(err) - 0.1)
-                {
-                    FS.transient = before; // no progress: stop
-                    break;
-                }
+                if (now >= 0) break;
+                const double moved = (now - cur) / (FS.transient.sustainDb - prev);
+                if (moved < 0.01) break; // the shaper does not move this clip's body
+                slope = std::min(moved, 2.0);
                 cur = now;
                 if (std::abs(want - cur) < bestErr)
                 {
