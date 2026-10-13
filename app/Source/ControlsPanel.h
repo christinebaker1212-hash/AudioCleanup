@@ -35,9 +35,12 @@ public:
         onAudioSettings;
     std::function<void(double)> onUiScale;
     std::function<void()> onLoadReference;
+    std::function<void()> onLoadFxReference;
 
     /** Reference track for matching (nullptr = generic preset targets). */
     void setReference(std::shared_ptr<const ac::ReferenceProfile> r);
+    /** Effects reference clip (sound effects; nullptr = none). */
+    void setFxReference(std::shared_ptr<const ac::FxProfile> r);
 
     /** Height the content needs at the current width (the panel scrolls when taller than the view). */
     int contentHeight() const { return contentHeight_; }
@@ -81,6 +84,13 @@ private:
     juce::TextButton export_{ "Export..." }, processAll_{ "Process all" }, exportAll_{ "Export all..." }, audio_{ "Audio device..." };
     juce::ToggleButton consistency_{ "Batch consistency" };
     std::shared_ptr<const ac::ReferenceProfile> reference_;
+    std::shared_ptr<const ac::FxProfile> fxReference_;
+    juce::TextButton fxLoad_{ "Match effects from a clip..." }, fxClear_{ "Clear" };
+    juce::Label fxName_, fxAmountL_;
+    juce::Slider fxAmount_;
+    juce::ToggleButton fxTone_{ "Tone" }, fxDyn_{ "Envelope" }, fxEcho_{ "Echo" }, fxReverb_{ "Reverb" }, fxWidth_{ "Width" },
+        fxLoud_{ "Loudness" };
+    void updateReferenceRows();
     juce::TextButton refLoad_{ "Match a reference..." }, refClear_{ "Clear" };
     juce::Label refName_, refAmountL_;
     juce::Slider refAmount_;

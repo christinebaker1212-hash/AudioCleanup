@@ -885,6 +885,23 @@ void planCleanupTone(Plan& plan, const AnalysisReport& a, const PresetDef& p, co
         if (s.invertRight) param(sp, "Polarity", "right channel inverted");
         decide(sp, on, sp.available ? why : "Mono or multichannel source.", uc);
     }
+
+    // ------------------------------------------------------ Echo / Reverb
+    // Set from a reference clip by effect matching (Sound Effect: Match effects
+    // from a clip); forcing them on without one uses these defaults.
+    {
+        auto& sp = plan.stage(StageId::Echo);
+        param(sp, "Delay", fmt("%.0f ms", S.echo.delayMs));
+        param(sp, "Feedback", fmt("%.2f", S.echo.feedback));
+        param(sp, "Level", fmt("%.1f dB", S.echo.levelDb));
+        decide(sp, false, "Effect matching only: set from a reference clip (Match effects from a clip...).", uc);
+    }
+    {
+        auto& sp = plan.stage(StageId::Reverb);
+        param(sp, "RT60", fmt("%.2f s", S.reverb.rt60));
+        param(sp, "Wet", fmt("%.1f dB", S.reverb.wetDb));
+        decide(sp, false, "Effect matching only: set from a reference clip (Match effects from a clip...).", uc);
+    }
 }
 
 void planDynamics(Plan& plan, const AnalysisReport& a, const PresetDef& p, const UserControls& uc, const AudioBuffer& x1)

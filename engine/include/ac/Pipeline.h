@@ -6,6 +6,7 @@
 #include "Dither.h"
 #include "Dynamics.h"
 #include "Eq.h"
+#include "FxMatch.h"
 #include "Presets.h"
 #include "Restoration.h"
 
@@ -21,6 +22,7 @@ enum class StageId
 {
     Filter, Declip, Declick, Dehum, Denoise, Neural, Dereverb, Plosive, DeEss,
     Eq, DynEq, Resonance, Leveler, Expander, Transient, Compressor, Multiband, Saturation, Stereo,
+    Echo, Reverb,
     Limiter,
     Count
 };
@@ -51,6 +53,12 @@ struct UserControls
     double referenceAmount = 0.8;          ///< 0..1 how far to move toward the reference
     bool matchReferenceLoudness = true;    ///< deliver at the reference's integrated loudness
     bool matchReferenceDynamics = true;    ///< move LRA / short-term crest toward the reference (closed loop)
+    /** Optional effects reference (sound effects): the reverb, echo, band
+        limits, punch, width, tone and loudness estimated on this clip are put
+        on the input. The preset's own tone and dynamics stages step aside. */
+    std::shared_ptr<const FxProfile> fxReference;
+    double fxAmount = 1.0;                 ///< 0..1: how much of each matched effect
+    bool fxTone = true, fxDynamics = true, fxEcho = true, fxReverb = true, fxWidth = true, fxLoudness = true;
     bool tempoSync = true;                 ///< music: snap compressor/limiter release times to note lengths
 };
 
@@ -86,6 +94,8 @@ struct ChainSettings
     MultibandSettings multiband;
     SaturationSettings saturation;
     StereoSettings stereo;
+    EchoSettings echo;
+    ReverbSettings reverb;
     LimiterSettings limiter;
 };
 

@@ -147,6 +147,15 @@ MainComponent::MainComponent()
                               });
     };
 
+    controls_.onLoadFxReference = [this] {
+        chooser_ = std::make_unique<juce::FileChooser>("Clip whose effects to match", juce::File(), af::supportedWildcard());
+        chooser_->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                              [this](const juce::FileChooser& fc) {
+                                  const auto f = fc.getResult();
+                                  if (f.existsAsFile()) loadFxReference(f);
+                              });
+    };
+
     hint_.setFont(theme::font(12));
     hint_.setColour(juce::Label::textColourId, theme::dim);
     hint_.setText("Drop files, choose a category and preset, press PROCESS, audition A/B, export. Shift-drag on the waveform to "
@@ -353,6 +362,28 @@ void MainComponent::loadReference(const juce::File& f)
             resized();
             scheduleAutoRender();
             hint_.setText("Reference loaded: tonal balance, loudness, width and loudness range will be matched (bounded). "
+                          "Press PROCESS if auto re-render is off.",
+                          juce::dontSendNotification);
+        });
+    });
+}
+
+void MainComponent::loadFxReference(const juce::File& f)
+{
+    worker_.post("Analysing effects on " + f.getFileName(), [this, f](const ac::Job& job) {
+        ac::AudioBuffer buf;
+        std::string err;
+        if (!af::loadAudio(f.getFullPathName().toStdString(), buf, err))
+        {
+            onMessageThread([err] { juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, "Effects clip", err); });
+            return;
+        }
+        auto prof = std::make_shared<const ac::FxProfile>(ac::analyzeEffects(buf, f.getFileName().toStdString(), job));
+        onMessageThread([this, prof] {
+            controls_.setFxReference(prof);
+            resized();
+            scheduleAutoRender();
+            hint_.setText("Effects clip loaded: what was found is applied in closed loop (see Stages and the Decision log). "
                           "Press PROCESS if auto re-render is off.",
                           juce::dontSendNotification);
         });
@@ -737,6 +768,7 @@ void MainComponent::handleCommandLine(const juce::StringArray& args)
         }
         else if (a == "--mix") script_.mix = true;
         else if (a == "--match" && i + 1 < args.size()) loadReference(juce::File::getCurrentWorkingDirectory().getChildFile(args[++i]));
+        else if (a == "--match-fx" && i + 1 < args.size()) loadFxReference(juce::File::getCurrentWorkingDirectory().getChildFile(args[++i]));
         else if (a == "--tab" && i + 1 < args.size()) tabs_.setCurrentTabIndex(args[++i].getIntValue());
         else if (a == "--scale" && i + 1 < args.size()) ++i; // applied at startup (Main.cpp)
         else if (a == "--window" && i + 1 < args.size())

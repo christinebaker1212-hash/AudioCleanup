@@ -74,6 +74,30 @@ the algorithm named here.
 | Tempo-synced release (music) | Compressor, multiband band and limiter sustained releases snap to the nearest note length (1/32–1/2 note) when within ×1.6 of the preset value; skipped without a clear pulse; `--no-tempo-sync` disables | Verified: at 128 BPM compressor 250 → 234.4 ms (1/8 note), limiter 480 → 468.8 ms (1/4 note) |
 | Stereo | M/S width, LR4 bass mono-isation (only when LF correlation < 0.2), voice balance correction, side-only EQ (width by frequency) and side low-cut (12 dB/oct; Warm 40 Hz, Punchy 60 Hz, Loud 80 Hz). Polarity fix: channels in opposite polarity (correlation < −0.5, also below 150 Hz) get the right channel inverted. Narrow-mix widening (music, no reference): side/mid above 300 Hz below −16 dB (finished mixes measure −2 to −18) lifts the side above 300 Hz by half the shortfall to −12 dB, at most 3 dB (1.5 dB Transparent/Dynamic); the mid, and so the mono fold-down, is untouched | Verified: transparent at width 1; side low-cut −17.1 dB at 30 Hz (theory 17.1) with the mid unchanged (max error 3e-8); anti-phase mix mono fold-down −16.1 → −0.1 dB, never triggered on a normal mix; narrow mix −30.1 → −27.2 dB side/mid, ordinary stereo left alone |
 
+## Effect matching (Sound Effect: **Match effects from a clip...**)
+
+The reference is only heard finished, so every estimate is blind. Each effect is measured on the
+reference, put on the clip with the engine's own processors, then measured again on the result
+(closed loop). Each effect can be switched off; *Effect amount* scales them all.
+
+| Effect | How it is estimated | How it is applied | Status / result |
+|---|---|---|---|
+| Echo / delay | LPC-whitened autocorrelation; level and feedback fitted to the first three repeats; damping from the low/high band ratio; ping-pong from cross-channel correlation. Repeats below −20 dB, loops and repeated samples (feedback ≥ 0.85, or a 2nd repeat as strong as the 1st) are rejected | Feedback delay with damping and ping-pong | Verified: known echo 320 ms / −4.0 dB / 0.40 read back exactly; real bird recording with a known echo: 420.0 ms, −8.2 dB, 0.50 (all as set) |
+| Reverb | Free decays after hits, onsets excluded; echo removed first with an inverse filter; two-slope decay fit limited to 60 dB below the peak and above the noise floor; decay per octave (125 Hz–8 kHz); tail level re the event's first 50 ms | Convolution with a synthesised decorrelated noise response that decays per octave as measured; level set in closed loop on the clip's loudest isolated hit | Verified: synthetic rooms per band within ~5–20 %; real bird recording with a known hall (1.6 s at 500 Hz, 0.8 s at 4 kHz) reads 1.59 s and 0.86 s. Untreated speech and dry synthetic material: no reverb found |
+| Band limiting (telephone, radio, lo-fi) | Steep edges of the long-term spectrum (≥ 14 dB per half octave, asymptote ≥ 24 dB/oct); cutoff where the asymptote meets the passband | Butterworth high/low-pass of matching order in the EQ | Verified: telephone band read as 289 Hz–3.2 kHz |
+| Envelope (compression / sustain / punch) | Hits' mean level 10–150 ms after their peak, re the peak; only with ≥ 3 separate hits | Transient shaper sustain, closed loop, best value kept | Verified: body −17.7 dB re peak matched to −10.1 (got −10.4) and −25.8 (got −25.1) |
+| Tone | 1/3-octave long-term spectrum | 60 % toward the reference, bounded +6/−9 dB; faded out when the spectra differ by 4–8 dB rms or more (a different kind of sound, not a different EQ) | Implemented; a snare matched to a bird recording leaves its tone alone (30 dB rms apart) |
+| Width | Side/mid ratio | M/S width; a mono clip becomes stereo when the reference is stereo | Verified (closed loop) |
+| Loudness | Reference max momentary loudness | Delivery target, preset's true-peak and limiter bounds | Verified: matched exactly when the bounds allow; the gap is logged otherwise |
+
+End to end (synthetic): a dry clip matched to a reference with RT60 1.02 s, a 280 ms echo and
+−22.8 LUFS max momentary reads RT60 1.02 s, 280.0 ms / −4.9 dB / 0.34 and −22.8 LUFS afterwards.
+
+Limits: a slowly ringing source (gong, cymbal) reads as reverb, a repeated sample can read as an
+echo (strong repetitions are rejected), and slow-release compression lengthens decays like a small
+room. Gentle filter slopes (under 24 dB/oct) are left to the tone match. The envelope is only
+matched on clips with separate hits. Room sound in a real recording counts as reverb, by design.
+
 ## Decision engine, presets, workflow
 
 | Capability | Status |

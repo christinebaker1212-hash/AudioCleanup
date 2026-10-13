@@ -26,6 +26,7 @@ void usage()
         "AudioFinisherCLI\n"
         "  presets                                   list presets\n"
         "  analyze <in> [--category voice|sfx|music]\n"
+        "  fx <clip>                                 list the effects estimated on a clip\n"
         "  process <in> <out> --preset <id> [options]\n"
         "  batch <outdir> <in...> --preset <id> [--consistency 0..1] [options]\n"
         "  compare <candidate> <reference>          measure a result against an approved reference\n"
@@ -37,10 +38,13 @@ void usage()
         "  --cleanup <0..2> --tone <0..2> --dynamics <0..2> --tilt <dB>\n"
         "  --on a,b  --off a,b   force stages (keys: filter declip declick dehum denoise neural\n"
         "                        dereverb plosive deess eq dyneq resonance leveler expander transient\n"
-        "                        compressor multiband saturation stereo limiter)\n"
+        "                        compressor multiband saturation stereo echo reverb limiter)\n"
         "  --no-cleanup --no-tone --no-dynamics --no-output\n"
         "  --noise-region <startSec>:<endSec>\n"
         "  --match <file> [--match-amount 0..1] [--no-match-loudness] [--no-match-dynamics]  match a reference track\n"
+        "  --match-fx <clip> [--fx-amount 0..1] [--fx-off tone,dynamics,echo,reverb,width,loudness]\n"
+        "                        put the effects found on <clip> (reverb, echo, band limits, envelope, width,\n"
+        "                        tone, loudness) on the input; see 'fx <clip>' for what is found\n"
         "  --removed <file>  --reference <file> (loudness-matched original)  --plan (print plan)  --no-tempo-sync\n"
         "  --user-preset <json>  load a user preset file instead of --preset");
 }
@@ -181,6 +185,25 @@ int runProcess(const Args& a)
         if (a.has("match-amount")) rq.controls.referenceAmount = std::stod(a.get("match-amount"));
         rq.controls.matchReferenceLoudness = !a.has("no-match-loudness");
         rq.controls.matchReferenceDynamics = !a.has("no-match-dynamics");
+    }
+    if (a.has("match-fx"))
+    {
+        AudioBuffer fxAudio;
+        if (!af::loadAudio(a.get("match-fx"), fxAudio, err)) { std::fprintf(stderr, "%s\n", err.c_str()); return 1; }
+        std::string nm = a.get("match-fx");
+        if (auto sl = nm.find_last_of("/\\"); sl != std::string::npos) nm = nm.substr(sl + 1);
+        rq.controls.fxReference = std::make_shared<FxProfile>(analyzeEffects(fxAudio, nm));
+        if (a.has("fx-amount")) rq.controls.fxAmount = std::stod(a.get("fx-amount"));
+        for (auto& k : split(a.get("fx-off")))
+        {
+            if (k == "tone") rq.controls.fxTone = false;
+            else if (k == "dynamics") rq.controls.fxDynamics = false;
+            else if (k == "echo") rq.controls.fxEcho = false;
+            else if (k == "reverb") rq.controls.fxReverb = false;
+            else if (k == "width") rq.controls.fxWidth = false;
+            else if (k == "loudness") rq.controls.fxLoudness = false;
+            else { std::fprintf(stderr, "unknown --fx-off item %s\n", k.c_str()); return 2; }
+        }
     }
     if (a.has("noise-region"))
     {
@@ -401,6 +424,15 @@ int main(int argc, char** argv)
             if (!af::loadAudio(a.pos[0], in, err, &si)) { std::fprintf(stderr, "%s\n", err.c_str()); return 1; }
             std::printf("%s (%s, %d bit%s)\n", a.pos[0].c_str(), si.formatName.c_str(), si.bitsPerSample, si.floatingPoint ? " float" : "");
             std::printf("%s", describe(analyze(in, parseCategory(a.get("category", "voice")))).c_str());
+            return 0;
+        }
+        if (cmd == "fx")
+        {
+            if (a.pos.empty()) { usage(); return 2; }
+            AudioBuffer in;
+            std::string err;
+            if (!af::loadAudio(a.pos[0], in, err)) { std::fprintf(stderr, "%s\n", err.c_str()); return 1; }
+            std::printf("%s", describeEffects(analyzeEffects(in, a.pos[0])).c_str());
             return 0;
         }
         if (cmd == "process") return runProcess(a);

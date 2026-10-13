@@ -47,6 +47,8 @@ const StageInfo kStages[] = {
     { "Multiband", "multiband", Section::Dynamics },
     { "Saturation", "saturation", Section::Tone },
     { "Stereo", "stereo", Section::Tone },
+    { "Echo / delay", "echo", Section::Tone },
+    { "Reverb", "reverb", Section::Tone },
     { "Loudness + TP limiter", "limiter", Section::Output },
 };
 static_assert(sizeof(kStages) / sizeof(kStages[0]) == size_t(StageId::Count));
@@ -116,6 +118,8 @@ std::unique_ptr<Processor> makeProcessor(StageId id, const ChainSettings& s)
         case StageId::Multiband: return std::make_unique<MultibandCompressor>(s.multiband);
         case StageId::Saturation: return std::make_unique<Saturator>(s.saturation);
         case StageId::Stereo: return std::make_unique<StereoProcessor>(s.stereo);
+        case StageId::Echo: return std::make_unique<EchoProcessor>(s.echo);
+        case StageId::Reverb: return std::make_unique<ConvolutionReverb>(s.reverb);
         case StageId::Limiter: return std::make_unique<TruePeakLimiter>(s.limiter);
         case StageId::Count: break;
     }
@@ -175,6 +179,30 @@ void padTo(AudioBuffer& b, size_t n)
     if (b.numFrames() < n) b.resizeFrames(n);
 }
 
+/** Duplicate a mono buffer to stereo (no-op otherwise). */
+AudioBuffer toStereo(const AudioBuffer& b)
+{
+    if (b.numChannels() != 1) return b;
+    AudioBuffer s(2, b.numFrames(), b.sampleRate);
+    s.vec(0) = b.vec(0);
+    s.vec(1) = b.vec(0);
+    return s;
+}
+
+/** Side-minus-mid power (dB); -100 for mono. */
+double sideToMidDb(const AudioBuffer& b)
+{
+    if (b.numChannels() != 2) return -100.0;
+    double m = 0, sd = 0;
+    for (size_t i = 0; i < b.numFrames(); ++i)
+    {
+        const double l = b.channel(0)[i], r = b.channel(1)[i];
+        m += (l + r) * (l + r);
+        sd += (l - r) * (l - r);
+    }
+    return powerToDb(sd / std::max(m, 1e-30), -100.0);
+}
+
 double grP99(const std::vector<float>& tr)
 {
     std::vector<double> v;
@@ -216,6 +244,23 @@ ProcessResult process(const ProcessRequest& req, const Job& job)
     plan.targetLufs = uc.targetLufs.value_or(P.targetLufs);
     plan.ceilingDbTP = uc.ceilingDbTP.value_or(P.ceilingDbTP);
     plan.outputSampleRate = uc.outputSampleRate > 0 ? uc.outputSampleRate : input.sampleRate;
+    if (uc.fxReference && uc.fxLoudness)
+    {
+        // Sound effects are delivered by their loudest moment: take the reference's.
+        const FxProfile& F = *uc.fxReference;
+        if (std::isfinite(F.loudness.maxMomentary))
+        {
+            plan.loudnessMode = LoudnessMode::MaxMomentary;
+            plan.targetLufs = F.loudness.maxMomentary;
+        }
+        else
+        {
+            plan.loudnessMode = LoudnessMode::Peak;
+            plan.targetLufs = std::min(F.loudness.truePeakDb, plan.ceilingDbTP);
+        }
+        plan.log.push_back(fmt("Effect reference '%s': delivery %s %.2f, as the reference.", F.name.c_str(),
+                               loudnessModeName(plan.loudnessMode), plan.targetLufs));
+    }
     if (uc.reference && uc.matchReferenceLoudness && uc.reference->loudness.integratedValid())
     {
         plan.loudnessMode = LoudnessMode::Integrated;
@@ -256,6 +301,19 @@ ProcessResult process(const ProcessRequest& req, const Job& job)
     }
 
     planCleanupTone(plan, A, P, uc, input);
+    // With an effects reference the reference sets tone and dynamics: the
+    // preset's own stages step aside (a stage the user forced stays).
+    auto fxStepAside = [&](std::initializer_list<StageId> ids) {
+        if (!uc.fxReference) return;
+        for (StageId id : ids)
+        {
+            auto& sp = plan.stage(id);
+            if (sp.forced || !sp.enabled) continue;
+            sp.enabled = false;
+            sp.reason = "Effect matching sets this from the reference clip. (Preset decision: " + sp.reason + ")";
+        }
+    };
+    fxStepAside({ StageId::Eq, StageId::DynEq, StageId::Resonance, StageId::Saturation, StageId::Stereo });
     throwIfCancelled(job);
 
     auto& S = plan.settings;
@@ -353,6 +411,8 @@ ProcessResult process(const ProcessRequest& req, const Job& job)
     // ----------------------------------------------------------- Dynamics
     phase(0.6, 0.62, "Measuring for dynamics");
     planDynamics(plan, A, P, uc, x);
+    fxStepAside({ StageId::Leveler, StageId::Expander, StageId::Transient, StageId::Compressor, StageId::Multiband, StageId::Saturation,
+                  StageId::Stereo });
     const AudioBuffer preDynamics = x;
     const size_t metricsPreDynamics = R.metrics.size();
     runIfEnabled(StageId::Leveler, 0.62, 0.66);
@@ -365,6 +425,8 @@ ProcessResult process(const ProcessRequest& req, const Job& job)
         runIfEnabled(StageId::Multiband, 0.72, 0.76);
         runIfEnabled(StageId::Saturation, 0.76, 0.8);
         runIfEnabled(StageId::Stereo, 0.8, 0.81);
+        runIfEnabled(StageId::Echo, 0.81, 0.812);
+        runIfEnabled(StageId::Reverb, 0.812, 0.815);
     };
     runBus();
 
@@ -673,6 +735,336 @@ ProcessResult process(const ProcessRequest& req, const Job& job)
         else plan.log.push_back(fmt("Reference residual deviation %.2f dB rms after dynamics: no correction needed.", rms0));
     }
 
+
+    // ------------------------------------------------- Effect matching (SFX)
+    // Put the effects estimated on the reference clip on this one, in the
+    // order a sound designer would chain them (band limit + EQ, dynamics,
+    // echo, reverb, width), then close the loops on the rendered result:
+    // punch (peak-to-loudness), reverb level (tail re event peak), width and
+    // tone are measured on the output exactly as on the reference.
+    bool fxUpmixed = false;
+    if (uc.fxReference)
+    {
+        phase(0.81, 0.84, "Effect matching");
+        const FxProfile& F = *uc.fxReference;
+        const double amt = clampv(uc.fxAmount, 0.0, 1.0);
+        auto userOff = [&](StageId id) {
+            auto it = uc.overrides.find(id);
+            return it != uc.overrides.end() && it->second == Override::Off;
+        };
+        plan.log.push_back("Effect reference '" + F.name + "':\n" + describeEffects(F));
+        if (F.stereo && x.numChannels() == 1 && uc.fxWidth && amt > 0)
+        {
+            x = toStereo(x);
+            fxUpmixed = true;
+            plan.log.push_back("Mono input made stereo to carry the reference's stereo image.");
+        }
+        const AudioBuffer fxIn = x;
+        ChainSettings FS = S;
+        FS.eq.clear();
+        FS.transient = TransientSettings{};
+        FS.echo = EchoSettings{};
+        FS.reverb = ReverbSettings{};
+        FS.stereo = StereoSettings{};
+        bool useEq = false, useTrans = false, useEcho = false, useRev = false, useStereo = false;
+        std::vector<EqBand> limitBands;
+        const bool toneOk = uc.fxTone && !userOff(StageId::Eq) && amt > 0;
+        if (toneOk && F.bandLimit.hpfHz > 0)
+            for (auto& b : butterworthBands(SvfType::Highpass, F.bandLimit.hpfHz, F.bandLimit.hpfOrder)) limitBands.push_back(b);
+        if (toneOk && F.bandLimit.lpfHz > 0 && F.bandLimit.lpfHz < 0.45 * x.sampleRate)
+            for (auto& b : butterworthBands(SvfType::Lowpass, F.bandLimit.lpfHz, F.bandLimit.lpfOrder)) limitBands.push_back(b);
+        FS.eq = limitBands;
+        useEq = !limitBands.empty();
+        if (uc.fxEcho && F.echo.found && !userOff(StageId::Echo) && amt > 0)
+        {
+            FS.echo.delayMs = F.echo.delayMs;
+            FS.echo.feedback = F.echo.feedback;
+            FS.echo.levelDb = F.echo.levelDb + gainToDb(amt);
+            FS.echo.pingPong = F.echo.pingPong && x.numChannels() == 2;
+            FS.echo.dampingHz = F.echo.dampingHz;
+            useEcho = true;
+        }
+        if (uc.fxReverb && F.reverb.found && !userOff(StageId::Reverb) && amt > 0)
+        {
+            FS.reverb.rt60 = F.reverb.rt60;
+            FS.reverb.bandHz = F.reverb.bandHz;
+            FS.reverb.bandRt60 = F.reverb.bandRt60;
+            FS.reverb.preDelayMs = 10.0;
+            FS.reverb.wetDb = F.reverb.tailLevelDb + 6.0; // first guess; the loop below sets it
+            FS.reverb.stereo = x.numChannels() == 2;
+            useRev = true;
+        }
+        auto renderOn = [&](const AudioBuffer& in, const ChainSettings& cs, std::vector<StageMetrics>* keep, bool withEcho) {
+            AudioBuffer y = in;
+            const std::pair<StageId, bool> chain[] = { { StageId::Eq, useEq },     { StageId::Transient, useTrans }, { StageId::Echo, useEcho && withEcho },
+                                                       { StageId::Reverb, useRev }, { StageId::Stereo, useStereo } };
+            for (auto [id, on] : chain)
+            {
+                if (!on) continue;
+                StageMetrics m;
+                y = runStage(id, cs, y, m, nullptr, holder, sub);
+                if (keep) keep->push_back(std::move(m));
+            }
+            return y;
+        };
+        auto render = [&](const ChainSettings& cs, std::vector<StageMetrics>* keep, bool withEcho = true) {
+            return renderOn(fxIn, cs, keep, withEcho);
+        };
+
+        // 1. Reverb level: the output's tail (re each event's early energy) to the reference's.
+        // Reverb and echo fill the gaps between events, so they come before the
+        // punch match; one more pass afterwards absorbs what compression moved.
+        double tailOut = -100;
+        bool tailMeasured = false;
+        auto matchReverbLevel = [&] {
+            if (!useRev) return;
+            const double want = F.reverb.tailLevelDb + gainToDb(amt);
+            // Calibrated on this clip's loudest event, isolated (5 ms before its
+            // peak to 60 ms after, then silence): "on one hit of this sound, the
+            // tail sits as on the reference's events". Well defined on any
+            // material; in a dense clip every event already carries the
+            // previous ones' reverb, so the full clip cannot be read this way.
+            const size_t n = fxIn.numFrames(), sr = size_t(fxIn.sampleRate);
+            size_t pk = 0;
+            float pv = 0;
+            for (int c = 0; c < fxIn.numChannels(); ++c)
+                for (size_t i = 0; i < n; ++i)
+                    if (std::abs(fxIn.channel(c)[i]) > pv) { pv = std::abs(fxIn.channel(c)[i]); pk = i; }
+            const size_t a0 = pk > sr / 200 ? pk - sr / 200 : 0, a1 = std::min(n, pk + sr * 60 / 1000);
+            AudioBuffer probe(fxIn.numChannels(), (a1 - a0) + 3 * sr, fxIn.sampleRate);
+            const size_t fade = std::max<size_t>(1, sr / 1000);
+            for (int c = 0; c < probe.numChannels(); ++c)
+                for (size_t i = a0; i < a1; ++i)
+                {
+                    const double g = std::min({ 1.0, double(i - a0) / double(fade), double(a1 - i) / double(fade) });
+                    probe.channel(c)[i - a0] = float(fxIn.channel(c)[i] * g);
+                }
+            // Start where the hit still stands out (the tail then follows the wet
+            // level ~1:1); if a step makes the decay unmeasurable, extrapolate
+            // once from the last reading.
+            FS.reverb.wetDb = -10.0;
+            for (int it = 0; it < 6; ++it)
+            {
+                // Without the echo, as the reference's reverb was measured with its echo removed.
+                const auto m = measureReverb(renderOn(probe, FS, nullptr, false));
+                if (m.segments == 0)
+                {
+                    if (tailMeasured) FS.reverb.wetDb = clampv(FS.reverb.wetDb, -40.0, 12.0);
+                    break;
+                }
+                tailMeasured = true;
+                tailOut = m.tailLevelDb;
+                const double err = want - tailOut;
+                if (std::abs(err) < 0.75) break;
+                FS.reverb.wetDb = clampv(FS.reverb.wetDb + err, -40.0, 12.0);
+            }
+        };
+        matchReverbLevel();
+
+        // 2. Dynamics: the events' body (mean level 10-150 ms after each peak,
+        // effects included) toward the reference's. Compression on the reference
+        // shows up as this envelope (fuller with a fast attack, more pointed with
+        // a slow one); it is reproduced with the transient shaper's sustain, in
+        // closed loop, keeping the best setting seen.
+        double bodyOut = 0, bodyStart = 0;
+        bool bodyMeasured = false;
+        const bool dynOk = uc.fxDynamics && amt > 0 && F.bodyDb < 0 && !userOff(StageId::Transient);
+        auto matchSustain = [&] {
+            if (!dynOk) return;
+            auto measure = [&] { return eventBodyDb(render(FS, nullptr)); };
+            const double start = measure();
+            if (start >= 0) return; // no events with a free decay in this clip
+            if (!bodyMeasured) bodyStart = start;
+            bodyMeasured = true;
+            const double want = start + (F.bodyDb - start) * amt;
+            double cur = start, bestErr = std::abs(want - start);
+            TransientSettings best = FS.transient;
+            for (int it = 0; it < 8 && bestErr > 0.75; ++it)
+            {
+                const double err = want - cur;
+                const TransientSettings before = FS.transient;
+                FS.transient.sustainDb = clampv(FS.transient.sustainDb + err, -15.0, 15.0);
+                if (std::abs(FS.transient.sustainDb - before.sustainDb) < 0.1) break;
+                useTrans = true;
+                const double now = measure();
+                if (now >= 0 || std::abs(want - now) > std::abs(err) - 0.1)
+                {
+                    FS.transient = before; // no progress: stop
+                    break;
+                }
+                cur = now;
+                if (std::abs(want - cur) < bestErr)
+                {
+                    bestErr = std::abs(want - cur);
+                    best = FS.transient;
+                }
+            }
+            FS.transient = best;
+            useTrans = std::abs(FS.transient.sustainDb) > 0.2 || std::abs(FS.transient.attackDb) > 0.2;
+        };
+        // The two interact (more reverb fills the body, softer onsets change the
+        // early energy): alternate.
+        for (int round = 0; round < 2; ++round)
+        {
+            matchSustain();
+            matchReverbLevel();
+        }
+
+        if (dynOk && bodyMeasured) bodyOut = eventBodyDb(render(FS, nullptr));
+
+        // 3. Width: side/mid of the result toward the reference's.
+        double smOut = -100;
+        if (uc.fxWidth && F.stereo && x.numChannels() == 2 && !userOff(StageId::Stereo) && amt > 0)
+        {
+            smOut = sideToMidDb(render(FS, nullptr));
+            if (smOut > -45.0)
+            {
+                const double d = clampv((F.sideToMidDb - smOut) * amt, -12.0, 9.0);
+                if (std::abs(d) > 0.5)
+                {
+                    FS.stereo.width = dbToGain(d);
+                    useStereo = true;
+                }
+            }
+        }
+
+        // 4. Tone: long-term spectrum of the result toward the reference's
+        // (60 % of the deviation, bounded), on top of the band limits.
+        double toneBefore = 0, toneAfter = 0, toneWeight = 1.0;
+        if (toneOk)
+        {
+            const double lo = F.bandLimit.hpfHz > 0 ? F.bandLimit.hpfHz * 1.3 : 40.0;
+            const double hi = F.bandLimit.lpfHz > 0 ? F.bandLimit.lpfHz / 1.3 : 16000.0;
+            for (int it = 0; it < 2; ++it)
+            {
+                const auto sp = longTermSpectrum(render(FS, nullptr));
+                double rms = 0;
+                auto dev = referenceDeviation(sp, F.spectrum, &rms);
+                if (it == 0)
+                {
+                    toneBefore = rms;
+                    // Spectra this far apart are different sounds (a whistle and a
+                    // drum), not different EQ: tone matching fades out from 4 to
+                    // 8 dB rms and only clear filter effects (band limits) remain.
+                    toneWeight = clampv((8.0 - rms) / 4.0, 0.0, 1.0);
+                }
+                if (toneWeight <= 0.0) break;
+                for (size_t i = 0; i < dev.size(); ++i)
+                {
+                    const bool outside = sp.bandHz[i] < lo || sp.bandHz[i] > hi;
+                    const bool absent = sp.bandAbsDb[i] < -100.0;
+                    dev[i] = outside || (absent && dev[i] > 0) ? 0.0 : dev[i] * 0.6 * amt * toneWeight;
+                }
+                auto bands = fitEqBands(sp.bandHz, dev, 6.0, 9.0, x.sampleRate, Category::SoundEffect, 60.0, 4);
+                if (bands.empty()) break;
+                for (auto& b : bands) FS.eq.push_back(b);
+                useEq = true;
+            }
+            double rms = 0;
+            referenceDeviation(longTermSpectrum(render(FS, nullptr)), F.spectrum, &rms);
+            toneAfter = rms;
+        }
+
+        // Final render (metrics kept) and the plan.
+        std::vector<StageMetrics> ms;
+        x = render(FS, &ms);
+        for (auto& m : ms) R.metrics.push_back(std::move(m));
+        S.eq = FS.eq;
+        S.transient = FS.transient;
+        S.echo = FS.echo;
+        S.reverb = FS.reverb;
+        S.stereo = FS.stereo;
+        auto set = [&](StageId id, bool on, const std::string& why) {
+            auto& sp = plan.stage(id);
+            sp.enabled = on;
+            sp.available = true;
+            sp.reason = why;
+        };
+        {
+            auto& sp = plan.stage(StageId::Eq);
+            std::string why;
+            if (!limitBands.empty())
+                why += fmt("Band limit from the reference's spectrum edges:%s%s. ",
+                           F.bandLimit.hpfHz > 0 ? fmt(" high-pass %.0f Hz (%d dB/oct)", F.bandLimit.hpfHz, 6 * F.bandLimit.hpfOrder).c_str() : "",
+                           F.bandLimit.lpfHz > 0 ? fmt(" low-pass %.0f Hz (%d dB/oct)", F.bandLimit.lpfHz, 6 * F.bandLimit.lpfOrder).c_str() : "");
+            if (toneOk && toneWeight <= 0.0)
+                why += fmt("Tone left as it is: the spectra differ by %.1f dB rms, i.e. different kinds of sound rather than different EQ.", toneBefore);
+            else if (toneOk)
+                why += fmt("Tone moved %.0f%% toward the reference: balance deviation %.1f -> %.1f dB rms (bounded +6/-9 dB).", 60 * amt * toneWeight,
+                           toneBefore, toneAfter);
+            set(StageId::Eq, useEq, toneOk ? "Effect matching. " + why : "Effect matching: tone not matched (switched off).");
+            sp.params.clear();
+            std::string list;
+            for (auto& b : FS.eq)
+                list += b.type == SvfType::Highpass ? fmt("HP %.0f Hz; ", b.freq)
+                        : b.type == SvfType::Lowpass ? fmt("LP %.0f Hz; ", b.freq)
+                                                     : fmt("%.0f Hz %+.1f dB; ", b.freq, b.gainDb);
+            sp.params.emplace_back("Bands", list.empty() ? "none" : list);
+        }
+        {
+            auto& ts = plan.stage(StageId::Transient);
+            ts.params.clear();
+            if (!uc.fxDynamics) set(StageId::Transient, false, "Effect matching: dynamics not matched (switched off).");
+            else if (F.bodyDb >= 0)
+                set(StageId::Transient, false, "Effect matching: the reference is not made of separate hits (needs 3+ events with free decays); dynamics left as they are.");
+            else if (!bodyMeasured)
+                set(StageId::Transient, false, "Effect matching: this clip is not made of separate hits (needs 3+ events with free decays); dynamics left as they are.");
+            else
+            {
+                const std::string sus = fmt("Event body %.1f -> %.1f dB re peak; reference %.1f dB", bodyStart, bodyOut, F.bodyDb);
+                set(StageId::Transient, useTrans,
+                    useTrans ? fmt("Effect matching: envelope %s to match the reference (its compression / shaping). ",
+                                   FS.transient.sustainDb > 0 ? "made fuller" : "tightened") + sus + "."
+                             : "Effect matching: the envelope already matches. " + sus + ".");
+                if (useTrans) ts.params.emplace_back("Sustain", fmt("%+.1f dB", FS.transient.sustainDb));
+            }
+        }
+        {
+            auto& sp = plan.stage(StageId::Echo);
+            sp.params.clear();
+            if (useEcho)
+            {
+                set(StageId::Echo, true, fmt("Echo found on the reference (confidence %.0f%%).", 100 * F.echo.confidence));
+                sp.params.emplace_back("Delay", fmt("%.1f ms", FS.echo.delayMs));
+                sp.params.emplace_back("Feedback", fmt("%.2f", FS.echo.feedback));
+                sp.params.emplace_back("First repeat", fmt("%.1f dB", FS.echo.levelDb));
+                if (FS.echo.pingPong) sp.params.emplace_back("Stereo", "ping-pong");
+                if (FS.echo.dampingHz > 0) sp.params.emplace_back("Damping", fmt("above %.0f Hz", FS.echo.dampingHz));
+            }
+            else set(StageId::Echo, false, F.echo.found ? "Echo found on the reference but switched off." : "No echo found on the reference.");
+        }
+        {
+            auto& sp = plan.stage(StageId::Reverb);
+            sp.params.clear();
+            if (useRev)
+            {
+                set(StageId::Reverb, true,
+                    fmt("Reverb found on the reference: RT60 %.2f s, tail %.1f dB re the event (confidence %.0f%%). %s", F.reverb.rt60, F.reverb.tailLevelDb,
+                        100 * F.reverb.confidence,
+                        tailMeasured ? fmt("Level set in closed loop on this clip's loudest hit: tail %.1f dB re the event.", tailOut).c_str()
+                                     : "Level not measurable on this clip: first estimate kept."));
+                std::string bands;
+                for (size_t i = 0; i < FS.reverb.bandHz.size(); ++i)
+                    if (FS.reverb.bandRt60[i] > 0) bands += fmt("%.0f Hz %.2f s; ", FS.reverb.bandHz[i], FS.reverb.bandRt60[i]);
+                sp.params.emplace_back("Decay per band", bands.empty() ? fmt("%.2f s", FS.reverb.rt60) : bands);
+                sp.params.emplace_back("Wet", fmt("%.1f dB re dry", FS.reverb.wetDb));
+                sp.params.emplace_back("Pre-delay", fmt("%.0f ms", FS.reverb.preDelayMs));
+                sp.params.emplace_back("Impulse response", "decorrelated noise, per-band exponential decay (synthesised)");
+            }
+            else set(StageId::Reverb, false, F.reverb.found ? "Reverb found on the reference but switched off." : "No reverb found on the reference.");
+        }
+        {
+            auto& sp = plan.stage(StageId::Stereo);
+            sp.params.clear();
+            if (useStereo)
+            {
+                set(StageId::Stereo, true, fmt("Effect matching: side/mid %.1f dB -> reference %.1f dB.", smOut, F.sideToMidDb));
+                sp.params.emplace_back("Width", fmt("%.2f", FS.stereo.width));
+            }
+            else if (fxUpmixed) set(StageId::Stereo, false, "Effect matching: mono input made stereo; the stereo reverb/echo carry the width.");
+        }
+    }
+
     // ---------------------------------------------------- Resample + Output
     if (std::abs(plan.outputSampleRate - x.sampleRate) > 1e-6)
     {
@@ -848,6 +1240,11 @@ ProcessResult process(const ProcessRequest& req, const Job& job)
     // ---------------------------------------------------------- Reference
     phase(0.97, 1.0, "Measuring");
     R.reference = resample(input, plan.outputSampleRate, sub);
+    if (fxUpmixed)
+    {
+        R.reference = toStereo(R.reference);
+        removed = toStereo(removed);
+    }
     const size_t n = std::max(R.reference.numFrames(), R.output.numFrames());
     padTo(R.reference, n);
     padTo(R.output, n);

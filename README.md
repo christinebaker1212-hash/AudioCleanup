@@ -80,6 +80,7 @@ For offline builds, point `FETCHCONTENT_SOURCE_DIR_<NAME>` at local checkouts.
 | File list (left) | Drag & drop or **Add files...** (WAV, FLAC, AIFF, MP3/MP2, Ogg Vorbis, Ogg Opus / .opus). Files are recognised by content, so a misnamed file still opens; MP3s from any encoder (CBR/VBR, MPEG-1/2/2.5, with or without a Xing header) decode completely and gaplessly. Originals are never modified or overwritten. |
 | Category + preset (right) | 15 presets in three families; user presets (★) are saved with **Save preset...** |
 | Reference matching | **Match a reference...** loads a finished track you like; the render moves toward its tonal balance, loudness, stereo width and dynamics: loudness range through slow level riding and compression, punch through transient emphasis. All of it is bounded, with *Amount* 0–100 % and the options *Match its loudness* / *Match its dynamics*. |
+| Effect matching (Sound Effect) | **Match effects from a clip...** estimates the reverb (decay per octave and level), echo/delay (time, feedback, level, damping, ping-pong), band limiting (telephone, radio), envelope (compression/sustain), tone, width and loudness heard on any clip and puts matching effects on yours, each checked in closed loop. *Effect amount* and per-effect switches (Tone, Envelope, Echo, Reverb, Width, Loudness). See [docs/screenshots/sfx-match-effects.png](docs/screenshots/sfx-match-effects.png). |
 | **PROCESS** | Analyses (cached per file and category) and renders on a background thread with progress and **Cancel**. With *Auto re-render* on, changing any control re-renders after a short pause. |
 | Simple controls | **Cleanup** (repair depth), **Tone** (correction strength + tilt), **Dynamics** (amount), **Output** (loudness mode, target, true-peak ceiling, sample rate). Each section can be switched off. |
 | Optional processors | Neural speech enhancer, de-reverb, multiband, saturation (or any stage via the advanced panel: Auto / On / Bypass). |
@@ -105,11 +106,15 @@ af_cli process in.wav out.wav --preset voice.studio --plan --removed removed.wav
 af_cli process mix.wav master.flac --preset music.warm --lufs -12 --ceiling -1 --sr 44100 --bits 24 --format flac
 af_cli process voice_note.opus clean.mp3 --preset voice.rescue --mp3-quality 0
 af_cli process mix.wav master.wav --preset music.punchy --match pro_track.flac --match-amount 0.8
+af_cli fx reference.wav
+af_cli process dry.wav out.wav --preset sfx.transparent --match-fx reference.wav --fx-amount 0.8 --fx-off tone
 af_cli batch outdir a.wav b.wav c.wav --preset sfx.game --consistency 0.5
 ```
 
 `--plan` prints every stage decision, setting and correction. `--reference` writes the
-loudness-matched, latency-aligned original for external A/B listening.
+loudness-matched, latency-aligned original for external A/B listening. `fx` prints the effects
+found on a clip; `--match-fx` puts them on the input (`--fx-off` takes a comma list of
+`tone,dynamics,echo,reverb,width,loudness`).
 
 ---
 

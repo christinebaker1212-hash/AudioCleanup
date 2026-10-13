@@ -1,3 +1,27 @@
+# AudioFinisher (unreleased)
+
+## Changes since v0.1.2
+
+### Effect matching for sound effects
+
+- **Match effects from a clip...** (Sound Effect category; CLI `--match-fx`,
+  `af_cli fx`). Load any clip and its effects are estimated and put on
+  yours: reverb (decay per octave and level), echo/delay (time, feedback,
+  level, damping, ping-pong), telephone/radio-style band limiting,
+  compression/sustain of hits, tone, stereo width and loudness. Each is
+  measured again on the result and adjusted (closed loop). *Effect amount*
+  and per-effect switches; the plan and decision log say what was found
+  and what was done.
+- New engine processors: convolution reverb with a synthesised response
+  (decay per octave band) and a feedback echo with damping and ping-pong.
+- Measured: a known echo reads back exactly (420 ms, -8.2 dB, feedback
+  0.50 on a real recording); a known hall reads 1.59 s at 500 Hz (set 1.6)
+  and 0.86 s at 4 kHz (set 0.8); a telephone band reads 289 Hz-3.2 kHz.
+  No reverb, echo or band limit is reported on dry material or untreated
+  speech.
+- Limits: estimates are blind. A ringing source reads as reverb, a repeated
+  sample can read as an echo, and slow-release compression lengthens decays.
+
 # AudioFinisher v0.1.2
 
 ## Changes since v0.1.1
