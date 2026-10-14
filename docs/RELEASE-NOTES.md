@@ -1,4 +1,4 @@
-# AudioFinisher (unreleased)
+# AudioFinisher v0.1.3
 
 ## Changes since v0.1.2
 
@@ -21,6 +21,10 @@
   speech.
 - Limits: estimates are blind. A ringing source reads as reverb, a repeated
   sample can read as an echo, and slow-release compression lengthens decays.
+
+Validation suite: 56 cases, 0 failures (Windows MSVC and Linux GCC).
+
+---
 
 # AudioFinisher v0.1.2
 
